@@ -688,6 +688,14 @@ class PartnerSuggestionSerializer(serializers.ModelSerializer):
             return None
         return f"{u.first_name or ''} {u.last_name or ''}".strip() or u.email
 
+    def get_unique_together_validators(self):
+        # Le modèle a unique_together (incident, suggested_partner). DRF en déduit
+        # un UniqueTogetherValidator qui FORCE suggested_partner requis dans l'input
+        # (enforce_required_fields), ce qui casse le chemin suggested_organisation
+        # (où le partenaire n'est résolu qu'au moment du validate()). On désactive
+        # ce validateur auto et on contrôle l'unicité manuellement dans validate().
+        return []
+
     def validate(self, data):
         incident = data.get('incident') or getattr(self.instance, 'incident', None)
         if incident and incident.is_resolved:
@@ -733,6 +741,17 @@ class PartnerSuggestionSerializer(serializers.ModelSerializer):
             if already:
                 raise serializers.ValidationError(
                     "Cette organisation collabore déjà sur l'incident."
+                )
+            # unicité (incident, suggested_partner) gérée manuellement puisque le
+            # validateur auto a été désactivé ci-dessus (get_unique_together_validators).
+            dup_qs = PartnerSuggestion.objects.filter(
+                incident=incident, suggested_partner=suggested_partner
+            )
+            if self.instance is not None:
+                dup_qs = dup_qs.exclude(pk=self.instance.pk)
+            if dup_qs.exists():
+                raise serializers.ValidationError(
+                    "Cette organisation a déjà été invitée ou suggérée pour cet incident."
                 )
         return data
 
