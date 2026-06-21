@@ -63,10 +63,15 @@ class UserSerializer(ModelSerializer):
     organisation_name = serializers.CharField(
         source='organisation_member.name', read_only=True
     )
+    web_role = serializers.SerializerMethodField(read_only=True)
 
     class Meta:
         model = User
         exclude = ('user_permissions', 'is_superuser', 'is_active', 'is_staff')
+
+    def get_web_role(self, obj):
+        from .roles import get_web_role
+        return get_web_role(obj)
 
     def create(self, validated_data):
         zones = validated_data.pop('zones', None)
