@@ -138,7 +138,17 @@ class IncidentAPIListView(generics.CreateAPIView):
     serializer_class = IncidentSerializer
     
     def get(self, request, format=None):
-        items = Incident.objects.select_related('user_id', 'category_id').order_by('-pk')
+        items = (
+            Incident.objects
+            .select_related('category_id')
+            .prefetch_related(
+                'user_id',
+                'user_id__zones',
+                'user_id__organisation_member',
+                'category_ids',
+            )
+            .order_by('-pk')
+        )
         paginator = CustomPageNumberPagination()
         result_page = paginator.paginate_queryset(items, request)
         serializer = IncidentGetSerializer(result_page, many=True)
