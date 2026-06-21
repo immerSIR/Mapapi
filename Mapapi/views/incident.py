@@ -4,7 +4,7 @@ from datetime import timedelta
 
 from django.conf import settings
 from django.core.mail import EmailMultiAlternatives
-from django.db.models import Q, Prefetch
+from django.db.models import Q, Prefetch, Count
 from django.template.loader import render_to_string
 from django.utils import timezone
 from django.utils.html import strip_tags
@@ -714,6 +714,72 @@ class IncidentFilterView(APIView):
 
         serializer = IncidentMapSerializer(incidents, many=True)
         return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class IncidentDashboardStatsView(APIView):
+    """Statistiques agrégées pour le dashboard (cartes KPI + widgets Par Localité /
+    Top catégories / Gravité + activité récente).
+
+    Tout est calculé côté BDD via GROUP BY (quelques requêtes), on ne renvoie
+    jamais toute la liste d'incidents au client pour qu'il agrège lui-même.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, *args, **kwargs):
+        qs = Incident.objects.filter(is_deleted=False)
+
+        total = qs.count()
+        resolved = qs.filter(etat__in=[RESOLVED, RESOLVED_DEFINITIVE]).count()
+        active = qs.filter(
+            etat__in=[TAKEN, RESOLUTION_PREPARED, IN_VALIDATION, 'in_progress']
+        ).count()
+
+        # Par localité : top 5 zones (zone normalisée/trim pour éviter les doublons
+        # « Bamako » vs « Bamako » avec espace en trop)
+        from django.db.models.functions import Trim
+        by_zone = [
+            {'name': row['z'], 'count': row['count']}
+            for row in (qs.exclude(zone__isnull=True).exclude(zone='')
+                          .values(z=Trim('zone')).annotate(count=Count('id'))
+                          .order_by('-count'))
+            if row['z']
+        ][:5]
+
+        # Top catégories (M2M category_ids) : pourcentage du total des incidents
+        by_category = [
+            {'name': row['category_ids__name'], 'count': row['count'],
+             'percentage': round(row['count'] * 100 / total) if total else 0}
+            for row in (qs.filter(category_ids__isnull=False)
+                          .values('category_ids__name').annotate(count=Count('id'))
+                          .order_by('-count')[:5])
+        ]
+
+        # Gravité : répartition high/medium/low en pourcentage (somme ≈ 100)
+        sev = {row['severity']: row['count']
+               for row in qs.values('severity').annotate(count=Count('id'))}
+        sev_total = sum(sev.get(l, 0) for l in ('high', 'medium', 'low')) or 1
+        by_severity = {
+            level: {'count': sev.get(level, 0),
+                    'percentage': round(sev.get(level, 0) * 100 / sev_total)}
+            for level in ('high', 'medium', 'low')
+        }
+
+        # Activité récente : 8 incidents les plus récents
+        recent_activity = list(
+            qs.order_by('-created_at')[:8]
+              .values('id', 'title', 'etat', 'zone', 'created_at', 'taken_by')
+        )
+
+        return Response({
+            'total_alerts': total,
+            'active_responses': active,
+            'resolved_incidents': resolved,
+            'by_zone': by_zone,
+            'by_category': by_category,
+            'by_severity': by_severity,
+            'recent_activity': recent_activity,
+        }, status=status.HTTP_200_OK)
+
 
 @extend_schema(
     description="Endpoint allowing retrieval an incident not resolved.",
