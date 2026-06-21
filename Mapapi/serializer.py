@@ -140,7 +140,21 @@ class CategorySerializer(ModelSerializer):
         fields = '__all__'
 
 
+class IncidentOrgAssignmentNestedSerializer(serializers.ModelSerializer):
+    """Lecture seule : assignations org exposées sur le détail d'un incident,
+    pour que le front affiche les actions accepter/refuser (spec §2/§3)."""
+    organisation_id = serializers.IntegerField(source='organisation.id', read_only=True)
+    organisation_name = serializers.CharField(source='organisation.name', read_only=True)
+
+    class Meta:
+        model = IncidentOrgAssignment
+        fields = ('id', 'organisation_id', 'organisation_name', 'status', 'deadline')
+        read_only_fields = fields
+
+
 class IncidentSerializer(ModelSerializer):
+    org_assignments = IncidentOrgAssignmentNestedSerializer(many=True, read_only=True)
+
     class Meta:
         model = Incident
         fields = '__all__'
@@ -181,6 +195,7 @@ class IncidentSerializer(ModelSerializer):
 class IncidentGetSerializer(ModelSerializer):
     user_id = UserSerializer()
     category_id = CategorySerializer()
+    org_assignments = IncidentOrgAssignmentNestedSerializer(many=True, read_only=True)
 
     class Meta:
         model = Incident
