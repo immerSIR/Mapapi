@@ -1,0 +1,9 @@
+# Railway image for the Celery worker (same app, different entrypoint).
+FROM python:3.10.13-bookworm
+WORKDIR /app
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
+COPY requirements.txt .
+RUN pip install --upgrade pip && pip install -r requirements.txt
+COPY . .
+CMD ["celery", "-A", "backend", "worker", "-l", "info"]

@@ -243,9 +243,13 @@ CORS_ORIGIN_WHITELIST = [
 ]
 
 
-# Celery Configuration
-CELERY_BROKER_URL = 'redis://redis-server:6379/0'
-CELERY_RESULT_BACKEND = 'redis://redis-server:6379/0'
+# Celery Configuration (broker/result configurable for deploys; defaults to the
+# docker-compose 'redis-server' service for local).
+CELERY_BROKER_URL = os.environ.get('CELERY_BROKER_URL', 'redis://redis-server:6379/0')
+CELERY_RESULT_BACKEND = os.environ.get(
+    'CELERY_RESULT_BACKEND',
+    os.environ.get('CELERY_BROKER_URL', 'redis://redis-server:6379/0'),
+)
 CELERY_ACCEPT_CONTENT = ['application/json']
 CELERY_TASK_SERIALIZER = 'json'
 CELERY_RESULT_SERIALIZER = 'json'
