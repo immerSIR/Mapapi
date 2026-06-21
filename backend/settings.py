@@ -253,6 +253,23 @@ CELERY_TIMEZONE = 'UTC'
 CELERY_TASK_TRACK_STARTED = True
 CELERY_TASK_TIME_LIMIT = 30 * 60
 
+# Phase 4 — mécanismes temporels du cycle de vie de l'incident (Celery Beat).
+# Validation tacite 72 h (D1) + anti-gel (T3) : horaires. Purge corbeille 30 j (D10) : quotidien.
+CELERY_BEAT_SCHEDULE = {
+    'auto-validate-overdue-resolutions': {
+        'task': 'Mapapi.tasks.auto_validate_overdue_resolutions',
+        'schedule': timedelta(hours=1),
+    },
+    'revert-stale-taken-incidents': {
+        'task': 'Mapapi.tasks.revert_stale_taken_incidents',
+        'schedule': timedelta(hours=1),
+    },
+    'purge-expired-trash': {
+        'task': 'Mapapi.tasks.purge_expired_trash',
+        'schedule': timedelta(days=1),
+    },
+}
+
 # Django Q Configuration
 Q_CLUSTER = {
     'name': 'backend',

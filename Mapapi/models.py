@@ -524,6 +524,15 @@ class Incident(models.Model):
                                      help_text="Si False, l'incident n'est visible que par l'organisation de l'agent.")
     is_deleted = models.BooleanField(default=False,
                                      help_text="Si True, l'incident a été supprimé (corbeille).")
+    deleted_at = models.DateTimeField(
+        null=True, blank=True,
+        help_text="Horodatage de la mise en corbeille (is_deleted=True). Sert à la purge des 30 j (spec D10)."
+    )
+    taken_in_charge_at = models.DateTimeField(
+        null=True, blank=True,
+        help_text="Horodatage de la prise en compte (passage en 'taken_into_account'). "
+                  "Sert au calcul du délai anti-gel (spec T3)."
+    )
     # --- Phase 4 : flux de résolution (résolution préparée → validation → définitif) ---
     resolution_submitted_by = models.ForeignKey(
         User, related_name='+', null=True, blank=True, on_delete=models.SET_NULL,

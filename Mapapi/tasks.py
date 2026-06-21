@@ -7,15 +7,27 @@ the structured response on the related :class:`Mapapi.models.Prediction`.
 import os
 import logging
 import mimetypes
+from datetime import timedelta
 
 import requests
 from celery import shared_task
 from django.conf import settings
+from django.db import transaction
+from django.utils import timezone
 
-from Mapapi.models import Prediction, PredictionStatus
+from Mapapi.models import (
+    Prediction, PredictionStatus, Incident,
+    IN_VALIDATION, RESOLVED_DEFINITIVE, TAKEN, DECLARED,
+)
 from Mapapi.services.prediction_mapper import fill_prediction_from_model_response
 
 logger = logging.getLogger(__name__)
+
+# Anti-gel (spec T3) : délai par défaut quand aucune sévérité catégorielle n'existe
+# sur l'Incident. La spec prévoit Élevée 30 j / Moyenne 60 j / Faible 90 j, mais le
+# modèle n'a PAS de champ sévérité catégoriel (seul Prediction.base_severity, un score
+# IA entier nullable, existe — non aligné sur ces 3 niveaux). On retient donc 60 j.
+ANTI_GEL_DEFAULT_DAYS = 60
 
 
 def _get_analyze_url():
@@ -125,6 +137,108 @@ def analyze_incident_with_model_task(self, prediction_id):
         prediction.error_message = str(exc)
         prediction.save(update_fields=["status", "error_message", "updated_at"])
         raise
+
+
+# ============================================================================
+# Phase 4 — mécanismes temporels du cycle de vie de l'incident (Celery Beat)
+# Tâches idempotentes : sûres à rejouer ; n'agissent que sur les lignes éligibles.
+# ============================================================================
+
+@shared_task
+def auto_validate_overdue_resolutions():
+    """Validation tacite à 72 h (spec D1).
+
+    Tout incident en 'in_validation' dont validation_deadline est dépassée passe
+    automatiquement en 'resolved_definitive' (le Super Admin n'a pas tranché à temps).
+    Idempotent : ne sélectionne que les lignes encore 'in_validation' avec une
+    échéance passée ; une fois basculées, elles ne ressortent plus.
+    """
+    now = timezone.now()
+    qs = Incident.objects.filter(
+        etat=IN_VALIDATION,
+        validation_deadline__isnull=False,
+        validation_deadline__lt=now,
+    )
+    count = 0
+    for incident in qs:
+        incident.etat = RESOLVED_DEFINITIVE
+        incident.save(update_fields=['etat'])
+        count += 1
+        logger.info(
+            "auto_validate_overdue_resolutions: incident=%s validé tacitement "
+            "(deadline=%s) -> resolved_definitive",
+            incident.pk, incident.validation_deadline,
+        )
+    return {"validated": count}
+
+
+@shared_task
+def revert_stale_taken_incidents():
+    """Anti-gel / délai d'échec de prise en compte (spec T3).
+
+    Un incident resté 'taken_into_account' au-delà du délai anti-gel repasse en
+    'declared' et redevient disponible (les champs de prise en charge sont remis à
+    zéro). Le délai dépend en théorie de la sévérité (Élevée 30 j / Moyenne 60 j /
+    Faible 90 j) mais aucun champ sévérité catégoriel n'existe sur le modèle, donc
+    on applique ANTI_GEL_DEFAULT_DAYS (60 j) pour tous.
+
+    On exige taken_in_charge_at non nul : les incidents pris en compte AVANT
+    l'ajout de ce champ (timestamp nul) ne sont jamais dégelés (pas de date fiable).
+    Idempotent : une fois repassé en 'declared', l'incident ne ressort plus.
+    """
+    now = timezone.now()
+    cutoff = now - timedelta(days=ANTI_GEL_DEFAULT_DAYS)
+    qs = Incident.objects.filter(
+        etat=TAKEN,
+        taken_in_charge_at__isnull=False,
+        taken_in_charge_at__lt=cutoff,
+    )
+    count = 0
+    for incident in qs:
+        incident.etat = DECLARED
+        incident.taken_by = None
+        incident.take_in_charge_mode = None
+        incident.taken_in_charge_at = None
+        incident.save(update_fields=[
+            'etat', 'taken_by', 'take_in_charge_mode', 'taken_in_charge_at',
+        ])
+        count += 1
+        logger.info(
+            "revert_stale_taken_incidents: incident=%s gelé > %s j -> declared "
+            "(anti-gel, spec T3)",
+            incident.pk, ANTI_GEL_DEFAULT_DAYS,
+        )
+    return {"reverted": count, "deadline_days": ANTI_GEL_DEFAULT_DAYS}
+
+
+@shared_task
+def purge_expired_trash():
+    """Purge de la Corbeille à 30 j (spec D10).
+
+    Suppression DÉFINITIVE (.delete()) des incidents en corbeille (is_deleted=True)
+    dont la mise en corbeille (deleted_at) date de plus de 30 jours. Les
+    suppressions antérieures à l'ajout de deleted_at (timestamp nul) ne sont PAS
+    purgées — on ne supprime que ce qu'on peut dater de façon fiable.
+    Idempotent : les lignes purgées disparaissent ; relancer ne refait rien.
+    """
+    cutoff = timezone.now() - timedelta(days=30)
+    qs = Incident.objects.filter(
+        is_deleted=True,
+        deleted_at__isnull=False,
+        deleted_at__lt=cutoff,
+    )
+    purged_ids = list(qs.values_list('pk', flat=True))
+    count = 0
+    with transaction.atomic():
+        for incident in qs:
+            incident.delete()
+            count += 1
+            logger.info(
+                "purge_expired_trash: incident=%s purgé définitivement "
+                "(deleted_at antérieur à %s)",
+                incident.pk, cutoff,
+            )
+    return {"purged": count, "ids": purged_ids}
 
 
 # --- Legacy code, kept for reference -----------------------------------------

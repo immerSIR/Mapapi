@@ -171,7 +171,8 @@ class IncidentAPIView(generics.CreateAPIView):
             return Response({"error": permission.message}, status=403)
         
         item.is_deleted = True
-        item.save(update_fields=['is_deleted'])
+        item.deleted_at = timezone.now()
+        item.save(update_fields=['is_deleted', 'deleted_at'])
         return Response(status=204)
 
 @extend_schema(
@@ -945,7 +946,8 @@ class TakeInChargeView(APIView):
             incident.taken_by = request.user
             incident.etat = 'taken_into_account'
             incident.take_in_charge_mode = 'internal'
-            incident.save(update_fields=['taken_by', 'etat', 'take_in_charge_mode'])
+            incident.taken_in_charge_at = timezone.now()
+            incident.save(update_fields=['taken_by', 'etat', 'take_in_charge_mode', 'taken_in_charge_at'])
 
             collaboration, _ = Collaboration.objects.get_or_create(
                 incident=incident,
@@ -999,10 +1001,13 @@ class TakeInChargeView(APIView):
                 )
 
             incident.taken_by = request.user
+            update_fields = ['taken_by', 'etat', 'take_in_charge_mode']
             if incident.etat == 'declared':
                 incident.etat = 'taken_into_account'
+                incident.taken_in_charge_at = timezone.now()
+                update_fields.append('taken_in_charge_at')
             incident.take_in_charge_mode = 'collaborative'
-            incident.save(update_fields=['taken_by', 'etat', 'take_in_charge_mode'])
+            incident.save(update_fields=update_fields)
 
             collaboration = Collaboration.objects.create(
                 incident=incident,
@@ -1305,7 +1310,8 @@ class BulkDeleteIncidentsView(APIView):
 
             if not incident.is_deleted:
                 incident.is_deleted = True
-                incident.save(update_fields=['is_deleted'])
+                incident.deleted_at = timezone.now()
+                incident.save(update_fields=['is_deleted', 'deleted_at'])
             deleted_ids.append(incident_id)
 
         return Response({
