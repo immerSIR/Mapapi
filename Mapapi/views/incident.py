@@ -19,7 +19,7 @@ from drf_spectacular.utils import extend_schema
 from ..serializer import *
 from ..models import (
     Collaboration, COLLAB_ROLE_LEADER, COLLAB_ROLE_CONTRIBUTOR, COLLAB_ROLE_OBSERVER,
-    COLLAB_STATUS_ACCEPTED, COLLAB_STATUS_TERMINATED,
+    COLLAB_STATUS_ACCEPTED, COLLAB_STATUS_TERMINATED, COLLAB_STATUS_PENDING,
     RESOLVED, TASK_DONE, TASK_FAILED,
     DECLARED, TAKEN, RESOLUTION_PREPARED, IN_VALIDATION, RESOLVED_DEFINITIVE,
     ORG_ROLE_FIELD, ORG_ROLE_ADMIN, ORG_ROLE_BUREAU,
@@ -1252,6 +1252,63 @@ class DeclareResolvedView(APIView):
         incident.save(update_fields=['etat', 'validation_deadline'])
 
         return Response(IncidentGetSerializer(incident).data, status=status.HTTP_200_OK)
+
+
+class DisengageIncidentView(APIView):
+    """POST /incidents/<incident_id>/disengage/ — le leader (Admin d'organisation)
+    se désengage de l'incident (spec §3, §6).
+
+    - S'il était seul (aucun contributeur accepté) : l'incident repasse « Déclaré ».
+    - Sinon : le leadership est proposé aux contributeurs (leur collaboration passe
+      role=leader / status=pending) ; l'incident reste « Pris en compte ».
+    """
+    permission_classes = [IsAuthenticated, IsOrgAdmin, IsIncidentLeader]
+
+    def post(self, request, incident_id):
+        try:
+            incident = Incident.objects.get(pk=incident_id)
+        except Incident.DoesNotExist:
+            return Response({"error": "Incident non trouvé."}, status=status.HTTP_404_NOT_FOUND)
+
+        if incident.etat != TAKEN:
+            return Response(
+                {"error": "On ne peut se désengager que d'un incident « Pris en compte »."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Contributeurs acceptés (hors le leader qui se désengage).
+        contributors = Collaboration.objects.filter(
+            incident=incident,
+            role=COLLAB_ROLE_CONTRIBUTOR,
+            status=COLLAB_STATUS_ACCEPTED,
+        ).exclude(user=request.user)
+
+        # Le leader sortant : on clôt sa propre collaboration et on libère la prise en charge.
+        Collaboration.objects.filter(incident=incident, user=request.user).update(
+            status=COLLAB_STATUS_TERMINATED
+        )
+        incident.taken_by = None
+        incident.take_in_charge_mode = None
+        incident.taken_in_charge_at = None
+
+        if contributors.exists():
+            # Leadership proposé aux contributeurs (ils doivent l'accepter).
+            contributors.update(role=COLLAB_ROLE_LEADER, status=COLLAB_STATUS_PENDING)
+            incident.save(update_fields=['taken_by', 'take_in_charge_mode', 'taken_in_charge_at'])
+            message = "Désengagement effectué : le leadership est proposé aux contributeurs."
+        else:
+            # Seul : l'incident redevient disponible ; les observateurs restants sont clôturés.
+            Collaboration.objects.filter(
+                incident=incident, status=COLLAB_STATUS_ACCEPTED,
+            ).update(status=COLLAB_STATUS_TERMINATED)
+            incident.etat = DECLARED
+            incident.save(update_fields=['etat', 'taken_by', 'take_in_charge_mode', 'taken_in_charge_at'])
+            message = "Désengagement effectué : l'incident repasse « Déclaré »."
+
+        return Response(
+            {"message": message, "incident": IncidentGetSerializer(incident).data},
+            status=status.HTTP_200_OK,
+        )
 
 
 @extend_schema(
