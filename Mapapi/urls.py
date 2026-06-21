@@ -19,6 +19,8 @@ from .views.incident import (
     BulkForceDeleteIncidentsView,
     IncidentPredictionView, RetryIncidentPredictionView,
     IncidentChatView, AgentPinLoginView, AgentChangePinView,
+    PrepareResolutionView, ReturnForCompletionView, DeclareResolvedView,
+    ValidateResolutionView, RejectResolutionView,
 )
 from .views.collaboration import (
     BulkCollaborationRequestView,
@@ -209,6 +211,12 @@ urlpatterns = [
     # --- Prise en charge et clôture d'incident ---
     path('incidents/<int:incident_id>/take_in_charge/', TakeInChargeView.as_view(), name='incident-take-in-charge'),
     path('incidents/<int:incident_id>/close/', CloseIncidentView.as_view(), name='incident-close'),
+    # --- Phase 4 : flux de résolution ---
+    path('incidents/<int:incident_id>/prepare-resolution/', PrepareResolutionView.as_view(), name='incident-prepare-resolution'),
+    path('incidents/<int:incident_id>/return-for-completion/', ReturnForCompletionView.as_view(), name='incident-return-for-completion'),
+    path('incidents/<int:incident_id>/declare-resolved/', DeclareResolvedView.as_view(), name='incident-declare-resolved'),
+    path('incidents/<int:incident_id>/validate-resolution/', ValidateResolutionView.as_view(), name='incident-validate-resolution'),
+    path('incidents/<int:incident_id>/reject-resolution/', RejectResolutionView.as_view(), name='incident-reject-resolution'),
     path('incidents/<int:incident_id>/toggle-public/', ToggleIncidentPublicView.as_view(), name='incident-toggle-public'),
     path('incidents/<int:incident_id>/assignments/', IncidentAssignmentListCreateView.as_view(), name='incident-assignment-list'),
     path('incidents/<int:incident_id>/assignments/<int:pk>/', IncidentAssignmentDetailView.as_view(), name='incident-assignment-detail'),

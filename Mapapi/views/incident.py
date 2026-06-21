@@ -20,13 +20,14 @@ from ..serializer import *
 from ..models import (
     Collaboration, COLLAB_ROLE_LEADER, COLLAB_ROLE_CONTRIBUTOR, COLLAB_ROLE_OBSERVER,
     RESOLVED, TASK_DONE, TASK_FAILED,
+    TAKEN, RESOLUTION_PREPARED, IN_VALIDATION, RESOLVED_DEFINITIVE,
     ORG_ROLE_FIELD, ORG_ROLE_ADMIN, ORG_ROLE_BUREAU,
     Prediction, PredictionStatus,
     ChatHistory, CHAT_ROLE_USER, CHAT_ROLE_ASSISTANT,
 )
 from ..permissions import (
     IsIncidentLeader, IsSuperAdminOrOrgOwnIncident, IsSuperAdmin,
-    IsOrgAdmin,
+    IsOrgAdmin, IsOrgOperative, IsSuperAdminRole,
 )
 from ..roles import is_org_admin
 from ..tasks import analyze_incident_with_model_task
@@ -1107,6 +1108,175 @@ class CloseIncidentView(APIView):
         incident.save()
         serializer = IncidentSerializer(incident)
         return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+# ============================================================================
+# Phase 4 — flux de résolution (additif, ne touche pas la voie legacy `close/`)
+#   taken_into_account ──prepare-resolution──▶ resolution_prepared
+#   resolution_prepared ──return-for-completion──▶ taken_into_account
+#   taken_into_account / resolution_prepared ──declare-resolved──▶ in_validation
+#   in_validation ──validate-resolution──▶ resolved_definitive
+#   in_validation ──reject-resolution(motif)──▶ taken_into_account
+# ============================================================================
+
+@extend_schema(
+    description=(
+        "Préparer une résolution (Agent de bureau / Admin « monte le dossier »). "
+        "Exige l'état 'taken_into_account'. Passe l'incident en 'resolution_prepared'."
+    ),
+    responses={200: IncidentGetSerializer, 400: "État invalide", 404: "Incident non trouvé"},
+)
+class PrepareResolutionView(APIView):
+    """POST /incidents/<incident_id>/prepare-resolution/ — org_admin OU bureau_agent."""
+    permission_classes = [IsAuthenticated, IsOrgOperative]
+
+    def post(self, request, incident_id):
+        try:
+            incident = Incident.objects.get(pk=incident_id)
+        except Incident.DoesNotExist:
+            return Response({"error": "Incident non trouvé."}, status=status.HTTP_404_NOT_FOUND)
+
+        if incident.etat != TAKEN:
+            return Response(
+                {"error": "Une résolution ne peut être préparée que pour un incident « Pris en compte »."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        incident.etat = RESOLUTION_PREPARED
+        incident.resolution_submitted_by = request.user
+        incident.resolution_submitted_at = timezone.now()
+        incident.save(update_fields=['etat', 'resolution_submitted_by', 'resolution_submitted_at'])
+
+        return Response(IncidentGetSerializer(incident).data, status=status.HTTP_200_OK)
+
+
+@extend_schema(
+    description=(
+        "Renvoyer un dossier de résolution pour complément (Admin). "
+        "Exige l'état 'resolution_prepared'. Repasse l'incident en 'taken_into_account'."
+    ),
+    responses={200: IncidentGetSerializer, 400: "État invalide", 404: "Incident non trouvé"},
+)
+class ReturnForCompletionView(APIView):
+    """POST /incidents/<incident_id>/return-for-completion/ — org_admin uniquement."""
+    permission_classes = [IsAuthenticated, IsOrgAdmin]
+
+    def post(self, request, incident_id):
+        try:
+            incident = Incident.objects.get(pk=incident_id)
+        except Incident.DoesNotExist:
+            return Response({"error": "Incident non trouvé."}, status=status.HTTP_404_NOT_FOUND)
+
+        if incident.etat != RESOLUTION_PREPARED:
+            return Response(
+                {"error": "Seul un dossier « Résolution préparée » peut être renvoyé pour complément."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        incident.etat = TAKEN
+        incident.save(update_fields=['etat'])
+
+        return Response(IncidentGetSerializer(incident).data, status=status.HTTP_200_OK)
+
+
+@extend_schema(
+    description=(
+        "Déclarer un incident résolu (Leader / Admin). Déclenche le contrôle Super Admin. "
+        "Exige l'état 'taken_into_account' ou 'resolution_prepared'. "
+        "Passe l'incident en 'in_validation' et fixe une échéance de validation à 72h."
+    ),
+    responses={200: IncidentGetSerializer, 400: "État invalide", 404: "Incident non trouvé"},
+)
+class DeclareResolvedView(APIView):
+    """POST /incidents/<incident_id>/declare-resolved/ — org_admin uniquement."""
+    permission_classes = [IsAuthenticated, IsOrgAdmin]
+
+    def post(self, request, incident_id):
+        try:
+            incident = Incident.objects.get(pk=incident_id)
+        except Incident.DoesNotExist:
+            return Response({"error": "Incident non trouvé."}, status=status.HTTP_404_NOT_FOUND)
+
+        if incident.etat not in (TAKEN, RESOLUTION_PREPARED):
+            return Response(
+                {"error": "Un incident ne peut être déclaré résolu que s'il est « Pris en compte » "
+                          "ou « Résolution préparée »."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        incident.etat = IN_VALIDATION
+        incident.validation_deadline = timezone.now() + timedelta(hours=72)
+        incident.save(update_fields=['etat', 'validation_deadline'])
+
+        return Response(IncidentGetSerializer(incident).data, status=status.HTTP_200_OK)
+
+
+@extend_schema(
+    description=(
+        "Valider une résolution (Super Admin). "
+        "Exige l'état 'in_validation'. Passe l'incident en 'resolved_definitive'."
+    ),
+    responses={200: IncidentGetSerializer, 400: "État invalide", 404: "Incident non trouvé"},
+)
+class ValidateResolutionView(APIView):
+    """POST /incidents/<incident_id>/validate-resolution/ — super_admin uniquement."""
+    permission_classes = [IsAuthenticated, IsSuperAdminRole]
+
+    def post(self, request, incident_id):
+        try:
+            incident = Incident.objects.get(pk=incident_id)
+        except Incident.DoesNotExist:
+            return Response({"error": "Incident non trouvé."}, status=status.HTTP_404_NOT_FOUND)
+
+        if incident.etat != IN_VALIDATION:
+            return Response(
+                {"error": "Seule une résolution « en validation » peut être validée."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        incident.etat = RESOLVED_DEFINITIVE
+        incident.save(update_fields=['etat'])
+
+        return Response(IncidentGetSerializer(incident).data, status=status.HTTP_200_OK)
+
+
+@extend_schema(
+    description=(
+        "Refuser une résolution (Super Admin). Motif obligatoire. "
+        "Exige l'état 'in_validation'. Repasse l'incident en 'taken_into_account' "
+        "et enregistre le motif dans rejection_reason."
+    ),
+    request={'application/json': {'type': 'object', 'properties': {'motif': {'type': 'string'}}}},
+    responses={200: IncidentGetSerializer, 400: "Motif manquant ou état invalide", 404: "Incident non trouvé"},
+)
+class RejectResolutionView(APIView):
+    """POST /incidents/<incident_id>/reject-resolution/ — super_admin uniquement."""
+    permission_classes = [IsAuthenticated, IsSuperAdminRole]
+
+    def post(self, request, incident_id):
+        try:
+            incident = Incident.objects.get(pk=incident_id)
+        except Incident.DoesNotExist:
+            return Response({"error": "Incident non trouvé."}, status=status.HTTP_404_NOT_FOUND)
+
+        if incident.etat != IN_VALIDATION:
+            return Response(
+                {"error": "Seule une résolution « en validation » peut être refusée."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        motif = (request.data.get('motif') or '').strip()
+        if not motif:
+            return Response(
+                {"error": "Le motif de refus est obligatoire."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        incident.etat = TAKEN
+        incident.rejection_reason = motif
+        incident.save(update_fields=['etat', 'rejection_reason'])
+
+        return Response(IncidentGetSerializer(incident).data, status=status.HTTP_200_OK)
 
 
 class BulkDeleteIncidentsView(APIView):

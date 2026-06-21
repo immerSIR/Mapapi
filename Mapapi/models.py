@@ -27,6 +27,10 @@ DECLARED = 'declared'
 RESOLVED = 'resolved'
 IN_PROGRESS = "in_progress"
 TAKEN = "taken_into_account"
+# --- Phase 4 : nouveaux états du flux de résolution (additifs, non destructifs) ---
+RESOLUTION_PREPARED = 'resolution_prepared'   # Résolution préparée (attente Admin)
+IN_VALIDATION = 'in_validation'               # Résolu (en validation)
+RESOLVED_DEFINITIVE = 'resolved_definitive'   # Résolu (définitif)
 
 USER_TYPES = (
     (ADMIN, ADMIN),
@@ -41,7 +45,11 @@ ETAT_INCIDENT = (
     (DECLARED, DECLARED),
     (RESOLVED, RESOLVED),
     (IN_PROGRESS, IN_PROGRESS),
-    (TAKEN, TAKEN)
+    (TAKEN, TAKEN),
+    # --- Phase 4 : nouveaux états du flux de résolution ---
+    (RESOLUTION_PREPARED, "Résolution préparée (attente Admin)"),
+    (IN_VALIDATION, "Résolu (en validation)"),
+    (RESOLVED_DEFINITIVE, "Résolu (définitif)"),
 )
 ETAT_RAPPORT = (
     ("new", "new"),
@@ -516,6 +524,23 @@ class Incident(models.Model):
                                      help_text="Si False, l'incident n'est visible que par l'organisation de l'agent.")
     is_deleted = models.BooleanField(default=False,
                                      help_text="Si True, l'incident a été supprimé (corbeille).")
+    # --- Phase 4 : flux de résolution (résolution préparée → validation → définitif) ---
+    resolution_submitted_by = models.ForeignKey(
+        User, related_name='+', null=True, blank=True, on_delete=models.SET_NULL,
+        help_text="Membre (agent de bureau/admin) ayant monté le dossier de résolution."
+    )
+    resolution_submitted_at = models.DateTimeField(
+        null=True, blank=True,
+        help_text="Date de soumission du dossier de résolution préparée."
+    )
+    validation_deadline = models.DateTimeField(
+        null=True, blank=True,
+        help_text="Échéance de contrôle Super Admin (72h après déclaration de résolution)."
+    )
+    rejection_reason = models.TextField(
+        null=True, blank=True,
+        help_text="Motif de refus de la résolution par le Super Admin."
+    )
 
     def __str__(self):
         return self.zone + ' '
