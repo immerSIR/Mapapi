@@ -187,6 +187,18 @@ ASSIGNMENT_STATUSES = (
     (ASSIGNMENT_CANCELLED, 'Annulé'),
 )
 
+# Phase 4 — assignation d'un incident à une ORGANISATION par le Super Admin
+# (spec §2/§3, T5 : jamais directement à un agent). L'Admin de l'organisation
+# cible accepte/décline sous 72 h, sinon acceptation tacite (D4).
+ORG_ASSIGNMENT_PENDING = 'pending'
+ORG_ASSIGNMENT_ACCEPTED = 'accepted'
+ORG_ASSIGNMENT_DECLINED = 'declined'
+ORG_ASSIGNMENT_STATUSES = (
+    (ORG_ASSIGNMENT_PENDING, 'En attente'),
+    (ORG_ASSIGNMENT_ACCEPTED, 'Acceptée'),
+    (ORG_ASSIGNMENT_DECLINED, 'Déclinée'),
+)
+
 
 # Modèle d'organisation pour gérer les organisations liées aux utilisateurs
 class Organisation(models.Model):
@@ -489,6 +501,38 @@ class IncidentAssignment(models.Model):
 
     def __str__(self):
         return f"{self.incident} assigné à {self.agent} avant {self.deadline:%d/%m/%Y %H:%M}"
+
+
+class IncidentOrgAssignment(models.Model):
+    """Assignation d'un incident à une ORGANISATION par le Super Admin (spec §2/§3, T5).
+
+    Distinct du modèle AGENT-centrique `IncidentAssignment` : ici la cible est
+    une organisation, jamais un agent. L'Admin de l'organisation cible accepte
+    ou décline sous 72 h ; sans réponse, acceptation tacite (D4). À l'acceptation,
+    l'organisation engage l'incident (« Pris en compte »).
+    """
+    incident = models.ForeignKey(
+        'Incident', on_delete=models.CASCADE, related_name='org_assignments'
+    )
+    organisation = models.ForeignKey(Organisation, on_delete=models.CASCADE)
+    assigned_by = models.ForeignKey(
+        User, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='created_org_assignments'
+    )
+    status = models.CharField(
+        max_length=20, choices=ORG_ASSIGNMENT_STATUSES, default=ORG_ASSIGNMENT_PENDING
+    )
+    decline_reason = models.TextField(null=True, blank=True)
+    deadline = models.DateTimeField(help_text="Échéance d'acceptation (now + 72 h).")
+    created_at = models.DateTimeField(auto_now_add=True)
+    responded_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ('-created_at',)
+
+    def __str__(self):
+        return f"Incident {self.incident_id} → orga {self.organisation_id} ({self.status})"
+
 
 class Incident(models.Model):
     title = models.CharField(max_length=250, blank=True,

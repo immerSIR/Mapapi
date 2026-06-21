@@ -21,8 +21,10 @@ from ..models import (
     Collaboration, COLLAB_ROLE_LEADER, COLLAB_ROLE_CONTRIBUTOR, COLLAB_ROLE_OBSERVER,
     COLLAB_STATUS_ACCEPTED, COLLAB_STATUS_TERMINATED,
     RESOLVED, TASK_DONE, TASK_FAILED,
-    TAKEN, RESOLUTION_PREPARED, IN_VALIDATION, RESOLVED_DEFINITIVE,
+    DECLARED, TAKEN, RESOLUTION_PREPARED, IN_VALIDATION, RESOLVED_DEFINITIVE,
     ORG_ROLE_FIELD, ORG_ROLE_ADMIN, ORG_ROLE_BUREAU,
+    Organisation, IncidentOrgAssignment,
+    ORG_ASSIGNMENT_PENDING, ORG_ASSIGNMENT_ACCEPTED, ORG_ASSIGNMENT_DECLINED,
     Prediction, PredictionStatus, Notification,
     ChatHistory, CHAT_ROLE_USER, CHAT_ROLE_ASSISTANT,
 )
@@ -76,6 +78,27 @@ def visible_incidents_qs(base_qs, user):
 
     # Aucun rôle web reconnu → public seulement.
     return base_qs.filter(is_public=True)
+
+
+def engage_incident(incident, leader):
+    """Engage l'organisation sur l'incident (sémantique « prise en compte »).
+
+    Reprend la logique de TakeInChargeView (mode interne) : si l'incident est
+    'declared', il passe en 'taken_into_account', avec taken_by = `leader` et
+    taken_in_charge_at = maintenant. Aucun changement si l'incident est déjà
+    engagé (idempotent côté état). Renvoie True si une transition a eu lieu.
+
+    NB : « l'organisation devient leader » est représenté par incident.taken_by
+    (un User) — le modèle n'a pas de FK organisation directe sur Incident ; on
+    réutilise donc taken_by, comme TakeInChargeView et HandleIncidentView.
+    """
+    if incident.etat == DECLARED:
+        incident.etat = TAKEN
+        incident.taken_by = leader
+        incident.taken_in_charge_at = timezone.now()
+        incident.save(update_fields=['etat', 'taken_by', 'taken_in_charge_at'])
+        return True
+    return False
 
 
 def terminate_active_collaborations(incident):
@@ -1361,6 +1384,174 @@ class ReportToAdminView(APIView):
                 "incident_id": incident.id,
                 "link": link,
             },
+            status=status.HTTP_200_OK,
+        )
+
+
+# ============================================================================
+# Phase 4 — assignation d'un incident à une ORGANISATION (Super Admin, spec §2/§3, T5)
+#   POST assign-to-organisation/  (Super Admin)  → IncidentOrgAssignment pending, 72 h
+#   POST <pk>/accept/  (Admin de l'org cible)    → accepted + engage l'incident
+#   POST <pk>/decline/ (Admin de l'org cible)    → declined + motif
+#   Tacite (sans réponse à 72 h) → tasks.auto_accept_overdue_assignments (D4)
+# ============================================================================
+
+@extend_schema(
+    description=(
+        "Assigner un incident à une ORGANISATION (Super Admin, spec §2). "
+        "Body {\"organisation_id\": N}. Crée une IncidentOrgAssignment 'pending' "
+        "avec une échéance de 72 h, et notifie les Admins de l'organisation cible. "
+        "L'incident est assigné à l'organisation, jamais directement à un agent (T5)."
+    ),
+    request={'application/json': {'type': 'object', 'properties': {'organisation_id': {'type': 'integer'}}}},
+    responses={201: IncidentOrgAssignmentSerializer, 400: "Org manquante ou assignation en attente", 404: "Incident non trouvé"},
+)
+class AssignIncidentToOrganisationView(APIView):
+    """POST /incidents/<incident_id>/assign-to-organisation/ — super_admin uniquement."""
+    permission_classes = [IsAuthenticated, IsSuperAdminRole]
+
+    def post(self, request, incident_id):
+        try:
+            incident = Incident.objects.get(pk=incident_id)
+        except Incident.DoesNotExist:
+            return Response({"error": "Incident non trouvé."}, status=status.HTTP_404_NOT_FOUND)
+
+        organisation_id = request.data.get('organisation_id')
+        if not organisation_id:
+            return Response(
+                {"error": "organisation_id est obligatoire."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            organisation = Organisation.objects.get(pk=organisation_id)
+        except (Organisation.DoesNotExist, ValueError, TypeError):
+            return Response(
+                {"error": "Organisation introuvable."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Une seule assignation en attente à la fois pour un incident donné.
+        if IncidentOrgAssignment.objects.filter(
+            incident=incident, status=ORG_ASSIGNMENT_PENDING
+        ).exists():
+            return Response(
+                {"error": "Une assignation est déjà en attente pour cet incident."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        assignment = IncidentOrgAssignment.objects.create(
+            incident=incident,
+            organisation=organisation,
+            assigned_by=request.user,
+            status=ORG_ASSIGNMENT_PENDING,
+            deadline=timezone.now() + timedelta(hours=72),
+        )
+
+        # Notifier les Admins de l'organisation cible (colaboration nullable).
+        admins = organisation.members.filter(org_role=ORG_ROLE_ADMIN)
+        message = (
+            f"Le Super Admin vous a assigné l'incident #{incident.id} "
+            f"« {incident.title or incident.zone} ». À accepter ou décliner sous 72 h."
+        )[:255]
+        for admin in admins:
+            Notification.objects.create(user=admin, message=message, colaboration=None)
+
+        return Response(
+            IncidentOrgAssignmentSerializer(assignment).data,
+            status=status.HTTP_201_CREATED,
+        )
+
+
+@extend_schema(
+    description=(
+        "Accepter une assignation Super Admin (Admin de l'organisation cible, spec §3). "
+        "Exige status='pending' et que le demandeur soit Admin de l'organisation "
+        "assignée. Passe à 'accepted', fixe responded_at, et engage l'incident "
+        "('declared' → 'taken_into_account', taken_by + taken_in_charge_at)."
+    ),
+    responses={200: IncidentOrgAssignmentSerializer, 400: "État invalide", 403: "Pas Admin de cette org", 404: "Assignation non trouvée"},
+)
+class AcceptOrgAssignmentView(APIView):
+    """POST /incident-org-assignments/<pk>/accept/ — org_admin de l'org cible."""
+    permission_classes = [IsAuthenticated, IsOrgAdmin]
+
+    def post(self, request, pk):
+        try:
+            assignment = IncidentOrgAssignment.objects.select_related(
+                'incident', 'organisation'
+            ).get(pk=pk)
+        except IncidentOrgAssignment.DoesNotExist:
+            return Response({"error": "Assignation non trouvée."}, status=status.HTTP_404_NOT_FOUND)
+
+        if getattr(request.user, 'organisation_member', None) != assignment.organisation:
+            return Response(
+                {"error": "Vous n'êtes pas administrateur de l'organisation assignée."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        if assignment.status != ORG_ASSIGNMENT_PENDING:
+            return Response(
+                {"error": "Seule une assignation « en attente » peut être acceptée."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        assignment.status = ORG_ASSIGNMENT_ACCEPTED
+        assignment.responded_at = timezone.now()
+        assignment.save(update_fields=['status', 'responded_at'])
+
+        # Engager l'incident (l'organisation en devient responsable / « Pris en compte »).
+        engage_incident(assignment.incident, request.user)
+
+        return Response(
+            IncidentOrgAssignmentSerializer(assignment).data,
+            status=status.HTTP_200_OK,
+        )
+
+
+@extend_schema(
+    description=(
+        "Décliner une assignation Super Admin (Admin de l'organisation cible, spec §3). "
+        "Body {\"motif\"/\"reason\"}. Exige status='pending' et que le demandeur soit "
+        "Admin de l'organisation assignée. Passe à 'declined', stocke decline_reason, "
+        "fixe responded_at."
+    ),
+    request={'application/json': {'type': 'object', 'properties': {'motif': {'type': 'string'}, 'reason': {'type': 'string'}}}},
+    responses={200: IncidentOrgAssignmentSerializer, 400: "État invalide", 403: "Pas Admin de cette org", 404: "Assignation non trouvée"},
+)
+class DeclineOrgAssignmentView(APIView):
+    """POST /incident-org-assignments/<pk>/decline/ — org_admin de l'org cible."""
+    permission_classes = [IsAuthenticated, IsOrgAdmin]
+
+    def post(self, request, pk):
+        try:
+            assignment = IncidentOrgAssignment.objects.select_related(
+                'incident', 'organisation'
+            ).get(pk=pk)
+        except IncidentOrgAssignment.DoesNotExist:
+            return Response({"error": "Assignation non trouvée."}, status=status.HTTP_404_NOT_FOUND)
+
+        if getattr(request.user, 'organisation_member', None) != assignment.organisation:
+            return Response(
+                {"error": "Vous n'êtes pas administrateur de l'organisation assignée."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        if assignment.status != ORG_ASSIGNMENT_PENDING:
+            return Response(
+                {"error": "Seule une assignation « en attente » peut être déclinée."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        reason = (request.data.get('motif') or request.data.get('reason') or '').strip()
+
+        assignment.status = ORG_ASSIGNMENT_DECLINED
+        assignment.decline_reason = reason or None
+        assignment.responded_at = timezone.now()
+        assignment.save(update_fields=['status', 'decline_reason', 'responded_at'])
+
+        return Response(
+            IncidentOrgAssignmentSerializer(assignment).data,
             status=status.HTTP_200_OK,
         )
 

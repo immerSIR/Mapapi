@@ -505,6 +505,22 @@ class IncidentAssignmentSerializer(serializers.ModelSerializer):
         return data
 
 
+class IncidentOrgAssignmentSerializer(serializers.ModelSerializer):
+    """Assignation d'un incident à une organisation par le Super Admin (spec §2/§3)."""
+    organisation_name = serializers.CharField(source='organisation.name', read_only=True)
+    incident_title = serializers.CharField(source='incident.title', read_only=True)
+    assigned_by_name = serializers.CharField(source='assigned_by.get_full_name', read_only=True)
+    assigned_by_email = serializers.EmailField(source='assigned_by.email', read_only=True)
+
+    class Meta:
+        model = IncidentOrgAssignment
+        fields = '__all__'
+        read_only_fields = (
+            'status', 'decline_reason', 'deadline', 'assigned_by',
+            'created_at', 'responded_at',
+        )
+
+
 class FieldReportSerializer(ModelSerializer):
     agent_name = serializers.CharField(source='agent.get_full_name', read_only=True)
     incident_title = serializers.CharField(source='incident.title', read_only=True)

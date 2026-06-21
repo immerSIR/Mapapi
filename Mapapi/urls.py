@@ -22,6 +22,8 @@ from .views.incident import (
     IncidentChatView, AgentPinLoginView, AgentChangePinView,
     PrepareResolutionView, ReturnForCompletionView, DeclareResolvedView,
     ValidateResolutionView, RejectResolutionView, ReportToAdminView,
+    AssignIncidentToOrganisationView, AcceptOrgAssignmentView,
+    DeclineOrgAssignmentView,
 )
 from .views.collaboration import (
     BulkCollaborationRequestView,
@@ -223,6 +225,11 @@ urlpatterns = [
     path('incidents/<int:incident_id>/toggle-public/', ToggleIncidentPublicView.as_view(), name='incident-toggle-public'),
     path('incidents/<int:incident_id>/assignments/', IncidentAssignmentListCreateView.as_view(), name='incident-assignment-list'),
     path('incidents/<int:incident_id>/assignments/<int:pk>/', IncidentAssignmentDetailView.as_view(), name='incident-assignment-detail'),
+
+    # --- Phase 4 : assignation d'un incident à une ORGANISATION (Super Admin, spec §2/§3, T5) ---
+    path('incidents/<int:incident_id>/assign-to-organisation/', AssignIncidentToOrganisationView.as_view(), name='incident-assign-to-organisation'),
+    path('incident-org-assignments/<int:pk>/accept/', AcceptOrgAssignmentView.as_view(), name='incident-org-assignment-accept'),
+    path('incident-org-assignments/<int:pk>/decline/', DeclineOrgAssignmentView.as_view(), name='incident-org-assignment-decline'),
     path('incidents/bulk-delete/', BulkDeleteIncidentsView.as_view(), name='incident-bulk-delete'),
     path('incidents/bulk-restore/', BulkRestoreIncidentsView.as_view(), name='incident-bulk-restore'),
     path('incidents/bulk-force-delete/', BulkForceDeleteIncidentsView.as_view(), name='incident-bulk-force-delete'),

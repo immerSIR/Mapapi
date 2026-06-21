@@ -268,6 +268,11 @@ CELERY_BEAT_SCHEDULE = {
         'task': 'Mapapi.tasks.purge_expired_trash',
         'schedule': timedelta(days=1),
     },
+    # Acceptation tacite des assignations Super Admin → organisation à 72 h (D4) : horaire.
+    'auto-accept-overdue-assignments': {
+        'task': 'Mapapi.tasks.auto_accept_overdue_assignments',
+        'schedule': timedelta(hours=1),
+    },
 }
 
 # Django Q Configuration

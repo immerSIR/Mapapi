@@ -19,6 +19,8 @@ from Mapapi.models import (
     Prediction, PredictionStatus, Incident, Collaboration,
     IN_VALIDATION, RESOLVED_DEFINITIVE, TAKEN, DECLARED,
     COLLAB_STATUS_ACCEPTED, COLLAB_STATUS_TERMINATED,
+    IncidentOrgAssignment, ORG_ASSIGNMENT_PENDING, ORG_ASSIGNMENT_ACCEPTED,
+    ORG_ROLE_ADMIN,
 )
 from Mapapi.services.prediction_mapper import fill_prediction_from_model_response
 
@@ -246,6 +248,51 @@ def purge_expired_trash():
                 incident.pk, cutoff,
             )
     return {"purged": count, "ids": purged_ids}
+
+
+@shared_task
+def auto_accept_overdue_assignments():
+    """Acceptation tacite des assignations d'organisation à 72 h (spec D4).
+
+    Toute IncidentOrgAssignment 'pending' dont la deadline est dépassée passe
+    automatiquement en 'accepted' (l'Admin de l'organisation cible n'a pas
+    répondu à temps), avec responded_at = maintenant, et l'incident est engagé
+    comme dans l'endpoint accept ('declared' → 'taken_into_account', taken_by +
+    taken_in_charge_at). taken_by est fixé à un Admin de l'organisation s'il en
+    existe un (l'org engage via l'un de ses Admins). Idempotent : ne sélectionne
+    que les lignes encore 'pending' avec une échéance passée.
+    """
+    now = timezone.now()
+    qs = IncidentOrgAssignment.objects.select_related(
+        'incident', 'organisation'
+    ).filter(
+        status=ORG_ASSIGNMENT_PENDING,
+        deadline__lt=now,
+    )
+    count = 0
+    for assignment in qs:
+        assignment.status = ORG_ASSIGNMENT_ACCEPTED
+        assignment.responded_at = now
+        assignment.save(update_fields=['status', 'responded_at'])
+
+        # Engager l'incident : taken_by = un Admin de l'org cible si disponible.
+        org_admin = assignment.organisation.members.filter(
+            org_role=ORG_ROLE_ADMIN
+        ).first()
+        incident = assignment.incident
+        if incident.etat == DECLARED:
+            incident.etat = TAKEN
+            incident.taken_by = org_admin
+            incident.taken_in_charge_at = now
+            incident.save(update_fields=['etat', 'taken_by', 'taken_in_charge_at'])
+
+        count += 1
+        logger.info(
+            "auto_accept_overdue_assignments: assignation=%s acceptée tacitement "
+            "(deadline=%s) -> incident %s engagé",
+            assignment.pk, assignment.deadline, incident.pk,
+        )
+    return {"accepted": count}
 
 
 # --- Legacy code, kept for reference -----------------------------------------
