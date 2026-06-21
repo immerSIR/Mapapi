@@ -79,6 +79,24 @@ TASK_STATES = (
     (TASK_FAILED, TASK_FAILED),
 )
 
+# --- Collaboration statuses (cf. spec §5 : En attente → Active → Terminée / Refusée) ---
+# Valeurs historiques conservées (pending/accepted/declined). Ajout des états
+# terminaux 'terminated' (Terminée) et 'refused' (Refusée). Choices uniquement :
+# le champ status est un CharField sans `choices=` au niveau modèle, donc aucune
+# migration n'est requise.
+COLLAB_STATUS_PENDING = 'pending'
+COLLAB_STATUS_ACCEPTED = 'accepted'
+COLLAB_STATUS_DECLINED = 'declined'
+COLLAB_STATUS_TERMINATED = 'terminated'
+COLLAB_STATUS_REFUSED = 'refused'
+COLLAB_STATUSES = (
+    (COLLAB_STATUS_PENDING, 'En attente'),
+    (COLLAB_STATUS_ACCEPTED, 'Active'),
+    (COLLAB_STATUS_DECLINED, 'Refusée'),
+    (COLLAB_STATUS_TERMINATED, 'Terminée'),
+    (COLLAB_STATUS_REFUSED, 'Refusée'),
+)
+
 SUGGESTION_PENDING = 'pending'
 SUGGESTION_ACCEPTED = 'accepted'
 SUGGESTION_REJECTED = 'rejected'
@@ -911,7 +929,9 @@ class Notification(models.Model):
     message = models.CharField(max_length=255)
     created_at = models.DateTimeField(auto_now_add=True)
     read = models.BooleanField(default=False)
-    colaboration = models.ForeignKey(Collaboration, on_delete=models.CASCADE)
+    # Rendu nullable (Phase 4 — Feature 3 « Signaler à mon Admin ») : une
+    # notification peut désormais exister sans collaboration rattachée.
+    colaboration = models.ForeignKey(Collaboration, on_delete=models.CASCADE, null=True, blank=True)
 
     def __str__(self):
         return self.message

@@ -19,15 +19,16 @@ from drf_spectacular.utils import extend_schema
 from ..serializer import *
 from ..models import (
     Collaboration, COLLAB_ROLE_LEADER, COLLAB_ROLE_CONTRIBUTOR, COLLAB_ROLE_OBSERVER,
+    COLLAB_STATUS_ACCEPTED, COLLAB_STATUS_TERMINATED,
     RESOLVED, TASK_DONE, TASK_FAILED,
     TAKEN, RESOLUTION_PREPARED, IN_VALIDATION, RESOLVED_DEFINITIVE,
     ORG_ROLE_FIELD, ORG_ROLE_ADMIN, ORG_ROLE_BUREAU,
-    Prediction, PredictionStatus,
+    Prediction, PredictionStatus, Notification,
     ChatHistory, CHAT_ROLE_USER, CHAT_ROLE_ASSISTANT,
 )
 from ..permissions import (
     IsIncidentLeader, IsSuperAdminOrOrgOwnIncident, IsSuperAdmin,
-    IsOrgAdmin, IsOrgOperative, IsSuperAdminRole,
+    IsOrgAdmin, IsAgentBureau, IsOrgOperative, IsSuperAdminRole,
 )
 from ..roles import is_org_admin
 from ..tasks import analyze_incident_with_model_task
@@ -75,6 +76,20 @@ def visible_incidents_qs(base_qs, user):
 
     # Aucun rôle web reconnu → public seulement.
     return base_qs.filter(is_public=True)
+
+
+def terminate_active_collaborations(incident):
+    """Clôt les collaborations encore actives d'un incident (spec §5).
+
+    Lorsqu'un incident devient « Résolu (définitif) », ses collaborations encore
+    'accepted' passent à 'terminated' (Terminée). Idempotent : ne touche que les
+    lignes encore 'accepted', donc relancer ne refait rien. Retourne le nombre
+    de collaborations clôturées.
+    """
+    return Collaboration.objects.filter(
+        incident=incident,
+        status=COLLAB_STATUS_ACCEPTED,
+    ).update(status=COLLAB_STATUS_TERMINATED)
 
 
 @extend_schema(
@@ -1242,6 +1257,10 @@ class ValidateResolutionView(APIView):
         incident.etat = RESOLVED_DEFINITIVE
         incident.save(update_fields=['etat'])
 
+        # Spec §5 : à la résolution définitive, les collaborations encore actives
+        # passent en « Terminée ». Idempotent.
+        terminate_active_collaborations(incident)
+
         return Response(IncidentGetSerializer(incident).data, status=status.HTTP_200_OK)
 
 
@@ -1282,6 +1301,68 @@ class RejectResolutionView(APIView):
         incident.save(update_fields=['etat', 'rejection_reason'])
 
         return Response(IncidentGetSerializer(incident).data, status=status.HTTP_200_OK)
+
+
+@extend_schema(
+    description=(
+        "« Signaler à mon Admin » (spec §4). Un agent de bureau recommande un "
+        "incident repéré à l'Admin de son organisation. Notifie chaque org_admin "
+        "de l'organisation du demandeur, avec un commentaire et un lien vers l'incident."
+    ),
+    request={'application/json': {'type': 'object', 'properties': {'comment': {'type': 'string'}}}},
+    responses={200: "Notifications créées", 400: "Pas d'organisation", 404: "Incident non trouvé"},
+)
+class ReportToAdminView(APIView):
+    """POST /incidents/<incident_id>/report-to-admin/ — bureau_agent uniquement."""
+    permission_classes = [IsAuthenticated, IsAgentBureau]
+
+    def post(self, request, incident_id):
+        try:
+            incident = Incident.objects.get(pk=incident_id)
+        except Incident.DoesNotExist:
+            return Response({"error": "Incident non trouvé."}, status=status.HTTP_404_NOT_FOUND)
+
+        org = getattr(request.user, 'organisation_member', None)
+        if org is None:
+            return Response(
+                {"error": "Vous n'êtes rattaché à aucune organisation."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        comment = (request.data.get('comment') or '').strip()
+        admins = list(org.members.filter(org_role=ORG_ROLE_ADMIN))
+
+        # Lien direct vers la fiche incident (référence dans le message).
+        link = f"/incidents/{incident.id}"
+        reporter_name = request.user.get_full_name() or request.user.email
+        base_msg = (
+            f"{reporter_name} vous signale l'incident #{incident.id} "
+            f"« {incident.title or incident.zone} »."
+        )
+        if comment:
+            base_msg = f"{base_msg} Commentaire : {comment}"
+        # Inclure le lien tout en respectant la limite de 255 caractères du champ.
+        message = f"{base_msg} ({link})"[:255]
+
+        created = 0
+        for admin in admins:
+            Notification.objects.create(
+                user=admin,
+                message=message,
+                colaboration=None,
+            )
+            created += 1
+
+        return Response(
+            {
+                "status": "success",
+                "message": "Admin(s) notifié(s).",
+                "notified_admins": created,
+                "incident_id": incident.id,
+                "link": link,
+            },
+            status=status.HTTP_200_OK,
+        )
 
 
 class BulkDeleteIncidentsView(APIView):

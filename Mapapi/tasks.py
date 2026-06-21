@@ -16,8 +16,9 @@ from django.db import transaction
 from django.utils import timezone
 
 from Mapapi.models import (
-    Prediction, PredictionStatus, Incident,
+    Prediction, PredictionStatus, Incident, Collaboration,
     IN_VALIDATION, RESOLVED_DEFINITIVE, TAKEN, DECLARED,
+    COLLAB_STATUS_ACCEPTED, COLLAB_STATUS_TERMINATED,
 )
 from Mapapi.services.prediction_mapper import fill_prediction_from_model_response
 
@@ -163,6 +164,12 @@ def auto_validate_overdue_resolutions():
     for incident in qs:
         incident.etat = RESOLVED_DEFINITIVE
         incident.save(update_fields=['etat'])
+        # Spec §5 : à la résolution définitive, les collaborations encore actives
+        # passent en « Terminée ». Idempotent (ne touche que les 'accepted').
+        Collaboration.objects.filter(
+            incident=incident,
+            status=COLLAB_STATUS_ACCEPTED,
+        ).update(status=COLLAB_STATUS_TERMINATED)
         count += 1
         logger.info(
             "auto_validate_overdue_resolutions: incident=%s validé tacitement "

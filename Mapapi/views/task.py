@@ -6,7 +6,7 @@ from rest_framework.views import APIView
 
 from drf_spectacular.utils import extend_schema
 
-from ..models import Incident, IncidentTask, TASK_DONE, TASK_FAILED, Collaboration
+from ..models import Incident, IncidentTask, TASK_PENDING, TASK_DONE, TASK_FAILED, Collaboration
 from ..serializer import IncidentTaskSerializer
 from ..permissions import IsIncidentLeaderOrReadOnlyCollaborator, IsIncidentLeader, IsIncidentCollaborator, IsIncidentLeaderOrContributor
 
@@ -130,6 +130,38 @@ class IncidentTaskFailView(APIView):
 
         task.state = TASK_FAILED
         task.failure_reason = failure_reason
+        task.save()  # le save() déclenche incident.update_progress()
+
+        serializer = IncidentTaskSerializer(task)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+@extend_schema(
+    description=(
+        "Relancer une tâche échouée (spec D11 — réservée au leader). "
+        "Exige l'état 'failed' ; repasse la tâche en 'pending' (À faire) tout en "
+        "CONSERVANT le motif d'échec (failure_reason)."
+    ),
+    responses={200: IncidentTaskSerializer, 400: "Tâche non échouée", 404: "Tâche non trouvée"},
+)
+class IncidentTaskRelaunchView(APIView):
+    """POST /incidents/<incident_id>/tasks/<task_id>/relaunch/"""
+    permission_classes = [IsAuthenticated, IsIncidentLeader]
+
+    def post(self, request, incident_id, task_id):
+        try:
+            task = IncidentTask.objects.get(pk=task_id, incident_id=incident_id)
+        except IncidentTask.DoesNotExist:
+            return Response({"error": "Tâche non trouvée."}, status=status.HTTP_404_NOT_FOUND)
+
+        if task.state != TASK_FAILED:
+            return Response(
+                {"error": "Seule une tâche échouée (failed) peut être relancée."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Repasse en 'pending' ; le motif d'échec est volontairement CONSERVÉ (spec D11).
+        task.state = TASK_PENDING
         task.save()  # le save() déclenche incident.update_progress()
 
         serializer = IncidentTaskSerializer(task)

@@ -3,6 +3,7 @@ from .views import *
 from .views.task import (
     IncidentTaskListCreateView, IncidentTaskDetailView,
     IncidentTaskCompleteView, IncidentTaskFailView, IncidentTaskConfirmView,
+    IncidentTaskRelaunchView,
 )
 from .views.partner_suggestion import (
     PartnerSuggestionListCreateView, PartnerSuggestionDetailView,
@@ -20,7 +21,7 @@ from .views.incident import (
     IncidentPredictionView, RetryIncidentPredictionView,
     IncidentChatView, AgentPinLoginView, AgentChangePinView,
     PrepareResolutionView, ReturnForCompletionView, DeclareResolvedView,
-    ValidateResolutionView, RejectResolutionView,
+    ValidateResolutionView, RejectResolutionView, ReportToAdminView,
 )
 from .views.collaboration import (
     BulkCollaborationRequestView,
@@ -199,6 +200,7 @@ urlpatterns = [
     path('incidents/<int:incident_id>/tasks/<int:pk>/complete/', IncidentTaskCompleteView.as_view(), name='incident-task-complete'),
     path('incidents/<int:incident_id>/tasks/<int:pk>/fail/', IncidentTaskFailView.as_view(), name='incident-task-fail'),
     path('incidents/<int:incident_id>/tasks/<int:pk>/confirm/', IncidentTaskConfirmView.as_view(), name='incident-task-confirm'),
+    path('incidents/<int:incident_id>/tasks/<int:task_id>/relaunch/', IncidentTaskRelaunchView.as_view(), name='incident-task-relaunch'),
 
     # --- Suggestions de partenaires (CRUD + accept/reject) ---
     path('incidents/<int:incident_id>/suggestions/', PartnerSuggestionListCreateView.as_view(), name='partner-suggestion-list'),
@@ -217,6 +219,7 @@ urlpatterns = [
     path('incidents/<int:incident_id>/declare-resolved/', DeclareResolvedView.as_view(), name='incident-declare-resolved'),
     path('incidents/<int:incident_id>/validate-resolution/', ValidateResolutionView.as_view(), name='incident-validate-resolution'),
     path('incidents/<int:incident_id>/reject-resolution/', RejectResolutionView.as_view(), name='incident-reject-resolution'),
+    path('incidents/<int:incident_id>/report-to-admin/', ReportToAdminView.as_view(), name='incident-report-to-admin'),
     path('incidents/<int:incident_id>/toggle-public/', ToggleIncidentPublicView.as_view(), name='incident-toggle-public'),
     path('incidents/<int:incident_id>/assignments/', IncidentAssignmentListCreateView.as_view(), name='incident-assignment-list'),
     path('incidents/<int:incident_id>/assignments/<int:pk>/', IncidentAssignmentDetailView.as_view(), name='incident-assignment-detail'),
