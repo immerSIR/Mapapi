@@ -16,6 +16,11 @@ from .models import (
     COLLAB_ROLE_CONTRIBUTOR,
     COLLAB_ROLE_OBSERVER,
 )
+from .roles import (
+    is_super_admin,
+    is_org_admin,
+    is_bureau_agent,
+)
 
 
 def _get_incident_from_view(view, request):
@@ -180,29 +185,66 @@ class IsSuperAdmin(BasePermission):
         return request.user and request.user.is_authenticated and request.user.is_superuser
 
 
-class IsSuperAdminOrOrgOwnIncident(BasePermission):
-    """Super Admin peut supprimer tous les incidents. Organisation ne peut supprimer que ses incidents."""
+class IsSuperAdminRole(BasePermission):
+    """Autorise uniquement le rôle web super_admin (cf. roles.py)."""
 
-    message = "Vous n'avez pas la permission de supprimer cet incident."
+    message = "Seul un super administrateur peut effectuer cette action."
+
+    def has_permission(self, request, view):
+        return is_super_admin(request.user)
+
+    def has_object_permission(self, request, view, obj):
+        return is_super_admin(request.user)
+
+
+class IsOrgAdmin(BasePermission):
+    """Autorise uniquement le rôle web org_admin (Admin d'organisation)."""
+
+    message = "Seul un administrateur d'organisation peut effectuer cette action."
+
+    def has_permission(self, request, view):
+        return is_org_admin(request.user)
+
+    def has_object_permission(self, request, view, obj):
+        return is_org_admin(request.user)
+
+
+class IsAgentBureau(BasePermission):
+    """Autorise uniquement le rôle web bureau_agent (Agent de bureau)."""
+
+    message = "Seul un agent de bureau peut effectuer cette action."
+
+    def has_permission(self, request, view):
+        return is_bureau_agent(request.user)
+
+    def has_object_permission(self, request, view, obj):
+        return is_bureau_agent(request.user)
+
+
+class IsOrgOperative(BasePermission):
+    """Autorise un membre opérationnel d'une organisation (org_admin OU bureau_agent)."""
+
+    message = "Cette action est réservée aux membres d'une organisation."
+
+    def has_permission(self, request, view):
+        return is_org_admin(request.user) or is_bureau_agent(request.user)
+
+    def has_object_permission(self, request, view, obj):
+        return is_org_admin(request.user) or is_bureau_agent(request.user)
+
+
+class IsSuperAdminOrOrgOwnIncident(BasePermission):
+    """Suppression d'incident réservée au Super Admin (spec §6 : Corbeille = Super Admin only).
+
+    Conservée pour compat (delete path), mais ne laisse plus les organisations
+    supprimer leurs propres incidents.
+    """
+
+    message = "Seul un super administrateur peut supprimer un incident."
 
     def has_permission(self, request, view):
         return request.user and request.user.is_authenticated
 
     def has_object_permission(self, request, view, obj):
-        # Super admin peut tout supprimer
-        if request.user.is_superuser:
-            return True
-
-        # Organisation ne peut supprimer que ses propres incidents
-        if isinstance(obj, Incident):
-            user_org = request.user.organisation_member
-            if user_org:
-                # L'incident appartient à l'organisation si:
-                # - Il a été reporté par un agent de l'organisation
-                # - Ou il a été pris en charge par l'organisation (taken_by)
-                if obj.user_id and obj.user_id.organisation_member == user_org:
-                    return True
-                if obj.taken_by and obj.taken_by.organisation_member == user_org:
-                    return True
-
-        return False
+        # Suppression d'incident : Super Admin uniquement.
+        return is_super_admin(request.user)

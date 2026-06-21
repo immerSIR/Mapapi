@@ -24,7 +24,11 @@ from ..models import (
     Prediction, PredictionStatus,
     ChatHistory, CHAT_ROLE_USER, CHAT_ROLE_ASSISTANT,
 )
-from ..permissions import IsIncidentLeader, IsSuperAdminOrOrgOwnIncident, IsSuperAdmin
+from ..permissions import (
+    IsIncidentLeader, IsSuperAdminOrOrgOwnIncident, IsSuperAdmin,
+    IsOrgAdmin,
+)
+from ..roles import is_org_admin
 from ..tasks import analyze_incident_with_model_task
 from ..Send_mails import send_email
 import logging
@@ -34,6 +38,42 @@ from ..services.model_chat_client import ask_model_chat
 from .common import CustomPageNumberPagination
 from rest_framework_simplejwt.tokens import RefreshToken
 from django.contrib.auth.hashers import check_password
+from .. import roles as web_roles
+
+
+def visible_incidents_qs(base_qs, user):
+    """Restreint un queryset d'incidents selon le rôle web du demandeur (spec §1, §6).
+
+    - super_admin            → tout (aucun filtre).
+    - org_admin/bureau_agent → incidents INTERNES de SON org (reporter dans l'org)
+                               UNION incidents PUBLICS de son PAYS (pays dérivé de l'org
+                               du reporter ; si le reporter n'a pas d'org, le pays est
+                               indéterminable → on garde l'incident public, signalement citoyen).
+    - sinon (pas de rôle web) → incidents publics uniquement.
+
+    NB : il n'existe pas de champ `Incident.country` ; le pays est dérivé de
+    l'organisation du reporter (`user_id.organisation_member.intervention_country`).
+    """
+    role = web_roles.get_web_role(user)
+
+    if role == web_roles.SUPER_ADMIN:
+        return base_qs
+
+    if role in (web_roles.ORG_ADMIN, web_roles.BUREAU_AGENT):
+        org = getattr(user, 'organisation_member', None)
+        country = getattr(org, 'intervention_country', None) if org else None
+        # (a) incidents internes dont le reporter appartient à MON org
+        internal_own = Q(is_public=False, user_id__organisation_member=org)
+        # (b) incidents publics de mon pays OU au pays indéterminable (reporter sans org)
+        public_in_country = Q(is_public=True) & (
+            Q(user_id__organisation_member__intervention_country=country)
+            | Q(user_id__organisation_member__isnull=True)
+            | Q(user_id__isnull=True)
+        )
+        return base_qs.filter(internal_own | public_in_country)
+
+    # Aucun rôle web reconnu → public seulement.
+    return base_qs.filter(is_public=True)
 
 
 @extend_schema(
@@ -45,11 +85,23 @@ class IncidentByZoneAPIView(generics.CreateAPIView):
     permission_classes = ()
     queryset = Incident.objects.all()
     serializer_class = IncidentSerializer
-    
+
+    def get_permissions(self):
+        # La LISTE par zone (GET) est restreinte par rôle (auth requise).
+        if self.request.method == 'GET':
+            return [IsAuthenticated()]
+        return []
+
     def get(self, request, format=None, **kwargs):
         try:
             zone = kwargs['zone']
-            item = Incident.objects.filter(zone=zone).select_related('user_id', 'category_id').order_by('-pk')
+            base = (
+                Incident.objects
+                .filter(zone=zone)
+                .select_related('user_id', 'user_id__organisation_member', 'category_id')
+                .order_by('-pk')
+            )
+            item = visible_incidents_qs(base, request.user)
             serializer = IncidentGetSerializer(item, many=True)
             return Response(serializer.data)
         except Incident.DoesNotExist:
@@ -133,22 +185,28 @@ class IncidentAPIView(generics.CreateAPIView):
 )
 class IncidentAPIListView(generics.CreateAPIView):
     permission_classes = ()
-    
+
     queryset = Incident.objects.all()
     serializer_class = IncidentSerializer
-    
+
+    def get_permissions(self):
+        # La LISTE (GET) est restreinte par rôle (auth requise) ; la création POST
+        # reste ouverte (déclaration mobile/citoyen, inchangée).
+        if self.request.method == 'GET':
+            return [IsAuthenticated()]
+        return []
+
     def get(self, request, format=None):
-        items = (
+        base = (
             Incident.objects
-            .select_related('category_id')
+            .select_related('category_id', 'user_id', 'user_id__organisation_member')
             .prefetch_related(
-                'user_id',
                 'user_id__zones',
-                'user_id__organisation_member',
                 'category_ids',
             )
             .order_by('-pk')
         )
+        items = visible_incidents_qs(base, request.user)
         paginator = CustomPageNumberPagination()
         result_page = paginator.paginate_queryset(items, request)
         serializer = IncidentGetSerializer(result_page, many=True)
@@ -305,6 +363,14 @@ class IncidentAssignmentListCreateView(generics.ListCreateAPIView):
             incident = Incident.objects.get(pk=self.kwargs['incident_id'])
         except Incident.DoesNotExist:
             return Response({"error": "Incident non trouvé."}, status=status.HTTP_404_NOT_FOUND)
+
+        # Spec §6 : « Assigner un incident à ses agents » = Admin d'organisation uniquement
+        # (un agent de bureau ne peut pas engager l'organisation en assignant).
+        if not (request.user.is_superuser or is_org_admin(request.user)):
+            return Response(
+                {"error": "Seul un administrateur d'organisation peut assigner un incident à un agent."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
 
         if not self._can_manage_assignment(request.user, incident):
             return Response({"error": "Droits insuffisants."}, status=status.HTTP_403_FORBIDDEN)
@@ -841,7 +907,7 @@ class IncidentUserView(APIView):
 )
 class TakeInChargeView(APIView):
     """POST /incidents/<incident_id>/take_in_charge/"""
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsOrgAdmin]
 
     def post(self, request, incident_id):
         try:
@@ -1002,7 +1068,7 @@ class TakeInChargeView(APIView):
 )
 class CloseIncidentView(APIView):
     """POST /incidents/<incident_id>/close/"""
-    permission_classes = [IsAuthenticated, IsIncidentLeader]
+    permission_classes = [IsAuthenticated, IsOrgAdmin, IsIncidentLeader]
 
     def post(self, request, incident_id):
         try:

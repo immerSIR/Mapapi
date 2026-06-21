@@ -17,7 +17,21 @@ from drf_spectacular.utils import extend_schema
 
 from ..models import Organisation, User, Incident, ORG_ROLE_ADMIN, ORG_ROLE_BUREAU, ORG_ROLE_FIELD
 from ..serializer import OrganisationSerializer, OrganisationMemberSerializer
+from ..permissions import IsSuperAdminRole
+from ..roles import is_super_admin, is_org_admin
 from ..Send_mails import send_email
+
+
+def _active_admin_count(org, exclude_user_id=None):
+    """Nombre d'admins (org_admin) actifs d'une organisation, hors `exclude_user_id`."""
+    qs = User.objects.filter(
+        organisation_member=org,
+        org_role=ORG_ROLE_ADMIN,
+        is_active=True,
+    )
+    if exclude_user_id is not None:
+        qs = qs.exclude(pk=exclude_user_id)
+    return qs.count()
 
 
 class OrganisationViewSet(generics.ListCreateAPIView, generics.RetrieveUpdateDestroyAPIView):
@@ -28,6 +42,33 @@ class OrganisationViewSet(generics.ListCreateAPIView, generics.RetrieveUpdateDes
 
     def get_queryset(self):
         return Organisation.objects.all()
+
+    def get_permissions(self):
+        # Spec §6 :
+        #  - création d'organisation        → Super Admin uniquement
+        #  - modification du profil d'une org → Admin de CETTE org (vérifié sur l'objet) ou Super Admin
+        #  - suppression d'une organisation   → Super Admin uniquement
+        #  - lecture (GET)                    → public (inchangé)
+        if self.request.method == 'POST':
+            return [IsAuthenticated(), IsSuperAdminRole()]
+        if self.request.method in ('PUT', 'PATCH'):
+            return [IsAuthenticated()]
+        if self.request.method == 'DELETE':
+            return [IsAuthenticated(), IsSuperAdminRole()]
+        return []
+
+    def update(self, request, *args, **kwargs):
+        org = self.get_object()
+        # Modifier le profil d'une organisation : Super Admin, ou Admin de CETTE organisation.
+        if not (
+            is_super_admin(request.user)
+            or (is_org_admin(request.user) and request.user.organisation_member_id == org.pk)
+        ):
+            return Response(
+                {"error": "Seul un administrateur de cette organisation peut modifier son profil."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        return super().update(request, *args, **kwargs)
 
 
 @extend_schema(
@@ -139,13 +180,14 @@ class OrganisationMemberCreateView(APIView):
 
     def post(self, request, pk):
         user = request.user
-        # Seul un admin org ou agent de bureau de cette org peut ajouter
-        if not (user.is_staff or (
+        # Spec §6 : créer/gérer les utilisateurs = Admin d'organisation uniquement
+        # (un agent de bureau ne gère plus les membres). Super Admin reste autorisé.
+        if not (is_super_admin(user) or (
             user.organisation_member_id == pk
-            and user.org_role in [ORG_ROLE_ADMIN, ORG_ROLE_BUREAU]
+            and is_org_admin(user)
         )):
             return Response(
-                {"error": "Vous n'avez pas les droits pour gérer les membres."},
+                {"error": "Seul un administrateur d'organisation peut gérer les membres."},
                 status=status.HTTP_403_FORBIDDEN,
             )
 
@@ -257,13 +299,13 @@ class FieldAgentCreateView(APIView):
     def post(self, request, pk):
         user = request.user
 
-        # Permissions : org_admin/bureau_agent de cette org ou superadmin
-        if not (user.is_staff or (
+        # Spec §6 : créer/gérer les utilisateurs = Admin d'organisation uniquement (ou Super Admin)
+        if not (is_super_admin(user) or (
             user.organisation_member_id == pk
-            and user.org_role in [ORG_ROLE_ADMIN, ORG_ROLE_BUREAU]
+            and is_org_admin(user)
         )):
             return Response(
-                {"error": "Vous n'avez pas les droits pour créer un agent dans cette organisation."},
+                {"error": "Seul un administrateur d'organisation peut créer un agent dans cette organisation."},
                 status=status.HTTP_403_FORBIDDEN,
             )
 
@@ -374,11 +416,13 @@ class OrganisationMemberDetailView(APIView):
 
     def _check_permission(self, request, pk):
         user = request.user
-        if user.is_staff:
+        # Spec §6 : promouvoir / changer de rôle / désactiver un membre = Admin d'organisation
+        # uniquement (ou Super Admin). Un agent de bureau ne gère plus les membres.
+        if is_super_admin(user):
             return True
         return (
             user.organisation_member_id == pk
-            and user.org_role in [ORG_ROLE_ADMIN, ORG_ROLE_BUREAU]
+            and is_org_admin(user)
         )
 
     def patch(self, request, pk, user_id):
@@ -421,6 +465,18 @@ class OrganisationMemberDetailView(APIView):
         if new_role:
             if new_role not in [ORG_ROLE_ADMIN, ORG_ROLE_BUREAU, ORG_ROLE_FIELD]:
                 return Response({"error": "Rôle invalide."}, status=status.HTTP_400_BAD_REQUEST)
+            # Règle anti-verrouillage : on ne peut pas rétrograder le DERNIER admin actif de l'org.
+            if (
+                member.org_role == ORG_ROLE_ADMIN
+                and new_role != ORG_ROLE_ADMIN
+                and member.is_active
+                and _active_admin_count(member.organisation_member, exclude_user_id=member.pk) == 0
+            ):
+                return Response(
+                    {"error": "Impossible de rétrograder le dernier administrateur actif de l'organisation. "
+                              "Promouvez d'abord un autre membre en administrateur."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
             member.org_role = new_role
             # Générer code agent si nouveau rôle terrain
             if new_role == ORG_ROLE_FIELD and not member.agent_code:
@@ -442,6 +498,18 @@ class OrganisationMemberDetailView(APIView):
             member = User.objects.get(pk=user_id, organisation_member_id=pk)
         except User.DoesNotExist:
             return Response({"error": "Membre non trouvé dans cette organisation."}, status=status.HTTP_404_NOT_FOUND)
+
+        # Règle anti-verrouillage : on ne peut pas retirer le DERNIER admin actif de l'org.
+        if (
+            member.org_role == ORG_ROLE_ADMIN
+            and member.is_active
+            and _active_admin_count(member.organisation_member, exclude_user_id=member.pk) == 0
+        ):
+            return Response(
+                {"error": "Impossible de retirer le dernier administrateur actif de l'organisation. "
+                          "Promouvez d'abord un autre membre en administrateur."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         # Supprimer physiquement l'agent
         member.delete()

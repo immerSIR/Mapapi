@@ -14,6 +14,7 @@ from ..models import (
     COLLAB_ROLE_LEADER, COLLAB_ROLE_CONTRIBUTOR, COLLAB_ROLE_OBSERVER,
 )
 from ..serializer import CollaborationSerializer, CollaborationEnrichedSerializer
+from ..permissions import IsOrgAdmin
 from ..Send_mails import send_email
 from .common import CustomPageNumberPagination
 
@@ -92,6 +93,13 @@ class CollaborationView(generics.CreateAPIView, generics.ListAPIView):
     queryset = Collaboration.objects.all()
     serializer_class = CollaborationSerializer
     pagination_class = CustomPageNumberPagination
+
+    def get_permissions(self):
+        # Spec §6 : « Demander une collaboration » = Admin d'organisation uniquement.
+        # La lecture (GET) reste ouverte à tout utilisateur authentifié.
+        if self.request.method == 'POST':
+            return [IsAuthenticated(), IsOrgAdmin()]
+        return [IsAuthenticated()]
 
     def get_queryset(self):
         user = self.request.user
@@ -181,7 +189,8 @@ class CollaborationDetailView(generics.RetrieveUpdateDestroyAPIView):
 
 
 class BulkCollaborationRequestView(APIView):
-    permission_classes = [IsAuthenticated]
+    # Spec §6 : « Demander une collaboration » = Admin d'organisation uniquement.
+    permission_classes = [IsAuthenticated, IsOrgAdmin]
 
     def post(self, request):
         requests_data = request.data.get('requests', [])
@@ -225,7 +234,8 @@ class BulkCollaborationRequestView(APIView):
 
 class HandleCollaborationRequestView(APIView):
     """POST /collaboration/<collaboration_id>/<action>/  (accept|reject)"""
-    permission_classes = [IsAuthenticated]
+    # Spec §6 : accepter/refuser une collaboration (côté leader) = Admin d'organisation.
+    permission_classes = [IsAuthenticated, IsOrgAdmin]
 
     def post(self, request, collaboration_id, action, format=None):
         try:
@@ -269,8 +279,9 @@ class HandleCollaborationRequestView(APIView):
 
 
 class DeclineCollaborationView(APIView):
-    permission_classes = [IsAuthenticated]
-    
+    # Spec §6 : décliner une collaboration (côté leader) = Admin d'organisation.
+    permission_classes = [IsAuthenticated, IsOrgAdmin]
+
     def post(self, request, *args, **kwargs):
         try:
             collaboration_id = request.data.get('collaboration_id')
@@ -324,8 +335,9 @@ class DeclineCollaborationView(APIView):
 
 
 class AcceptCollaborationView(APIView):
-    permission_classes = [IsAuthenticated]
-    
+    # Spec §6 : accepter une collaboration (côté leader) = Admin d'organisation.
+    permission_classes = [IsAuthenticated, IsOrgAdmin]
+
     def post(self, request, *args, **kwargs):
         try:
             collaboration_id = request.data.get('collaboration_id')
