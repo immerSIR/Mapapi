@@ -675,7 +675,12 @@ class IncidentFilterView(APIView):
         custom_start = request.query_params.get('custom_start')
         custom_end = request.query_params.get('custom_end')
 
-        incidents = Incident.objects.all()
+        # Carte du dashboard : on ne tire que les colonnes scalaires utiles aux
+        # marqueurs (cf. IncidentMapSerializer) pour éviter le N+1 d'IncidentSerializer.
+        incidents = Incident.objects.only(
+            'id', 'title', 'lattitude', 'longitude', 'etat', 'taken_by',
+            'is_deleted', 'severity', 'created_at',
+        )
 
         if filter_type == 'today':
             incidents = incidents.filter(created_at__date=timezone.now().date())
@@ -693,7 +698,7 @@ class IncidentFilterView(APIView):
         elif filter_type == 'custom_range' and custom_start and custom_end:
             incidents = incidents.filter(created_at__date__range=[custom_start, custom_end])
 
-        serializer = IncidentSerializer(incidents, many=True)
+        serializer = IncidentMapSerializer(incidents, many=True)
         return Response(serializer.data, status=status.HTTP_200_OK)
 
 @extend_schema(

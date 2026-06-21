@@ -202,6 +202,26 @@ class IncidentGetSerializer(ModelSerializer):
         fields = '__all__'
 
 
+class IncidentMapSerializer(ModelSerializer):
+    """Sérialiseur ultra-léger pour la carte du dashboard.
+
+    N'expose que les champs scalaires dont les marqueurs ont besoin. Il évite
+    volontairement le M2M `category_ids`, le nested `org_assignments` et les URLs
+    de fichiers (photo/video/audio) qui, via `IncidentSerializer(__all__)`,
+    déclenchaient un N+1 (~126 requêtes pour 59 incidents → ~12 s sur le pooler
+    Supabase distant). `taken_by` reste un PK (optimisation PK-only de DRF, pas de
+    requête supplémentaire), donc l'endpoint ne fait plus qu'UNE requête. Les
+    détails (photo, description, participants…) sont chargés à la demande via
+    `GET /incident/<id>` quand un marqueur est cliqué."""
+
+    class Meta:
+        model = Incident
+        fields = (
+            'id', 'title', 'lattitude', 'longitude', 'etat', 'taken_by',
+            'is_deleted', 'severity', 'created_at',
+        )
+
+
 class EvenementSerializer(ModelSerializer):
     class Meta:
         model = Evenement

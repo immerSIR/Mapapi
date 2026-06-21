@@ -154,6 +154,16 @@ DATABASES = {
         'USER': os.environ.get("POSTGRES_USER"),
         'PASSWORD': os.environ.get("POSTGRES_PASSWORD"),
         'PORT': os.environ.get("PORT"),
+        # La BDD est un pooler Supabase distant : ouvrir une connexion TLS à chaque
+        # requête coûtait ~0,6 s (par requête, sur TOUS les endpoints). On réutilise
+        # la connexion entre requêtes (60 s par défaut, ajustable via DB_CONN_MAX_AGE).
+        'CONN_MAX_AGE': int(os.environ.get("DB_CONN_MAX_AGE", "60")),
+        # Revalide une connexion persistée avant réutilisation (le pooler peut la
+        # fermer) et se reconnecte si elle est morte — évite les erreurs sur conn. obsolète.
+        'CONN_HEALTH_CHECKS': True,
+        # Pooler en mode « transaction » (pgbouncer, port 6543) : les curseurs côté
+        # serveur ne survivent pas entre transactions → requis avec CONN_MAX_AGE.
+        'DISABLE_SERVER_SIDE_CURSORS': True,
         'OPTIONS': {
             'sslmode': 'require',
         },
