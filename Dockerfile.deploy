@@ -1,0 +1,16 @@
+# Railway deploy image — serves the app (the root Dockerfile is a CI/test image).
+FROM python:3.10.13-bookworm
+
+WORKDIR /app
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
+
+COPY requirements.txt .
+RUN pip install --upgrade pip && pip install -r requirements.txt
+
+COPY . .
+
+# Railway injects PORT (we set it to 6543 so it doubles as the Supabase pooler
+# port that settings.py reads for the DB — a local listen vs a remote connect,
+# no conflict). Apply migrations, then serve via daphne (ASGI).
+CMD ["sh", "-c", "python manage.py migrate --noinput && daphne -b 0.0.0.0 -p ${PORT:-8000} backend.asgi:application"]
