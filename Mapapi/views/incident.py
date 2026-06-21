@@ -4,7 +4,7 @@ from datetime import timedelta
 
 from django.conf import settings
 from django.core.mail import EmailMultiAlternatives
-from django.db.models import Q
+from django.db.models import Q, Prefetch
 from django.template.loader import render_to_string
 from django.utils import timezone
 from django.utils.html import strip_tags
@@ -164,7 +164,21 @@ class IncidentAPIView(generics.CreateAPIView):
 
     def get(self, request, id, format=None):
         try:
-            item = Incident.objects.get(pk=id)
+            # Détail d'un incident : on précharge les org_assignments AVEC leur
+            # organisation (select_related) en une requête au lieu d'une requête
+            # organisation par assignation, et les catégories (M2M). Sur un pooler
+            # distant chaque aller-retour compte (≈80 ms) : 4 requêtes → 3.
+            item = (
+                Incident.objects
+                .prefetch_related(
+                    Prefetch(
+                        'org_assignments',
+                        queryset=IncidentOrgAssignment.objects.select_related('organisation'),
+                    ),
+                    'category_ids',
+                )
+                .get(pk=id)
+            )
             serializer = IncidentSerializer(item)
             return Response(serializer.data)
         except Incident.DoesNotExist:
