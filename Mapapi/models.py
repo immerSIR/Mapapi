@@ -32,6 +32,23 @@ RESOLUTION_PREPARED = 'resolution_prepared'   # Résolution préparée (attente 
 IN_VALIDATION = 'in_validation'               # Résolu (en validation)
 RESOLVED_DEFINITIVE = 'resolved_definitive'   # Résolu (définitif)
 
+# --- Anti-gel (spec T3 / §5) : sévérité catégorielle de l'incident ---
+# Pilote le délai d'échec de prise en compte : Élevée 30 j / Moyenne 60 j / Faible 90 j.
+SEVERITY_HIGH = 'high'
+SEVERITY_MEDIUM = 'medium'
+SEVERITY_LOW = 'low'
+SEVERITY_CHOICES = (
+    (SEVERITY_HIGH, "Élevée"),
+    (SEVERITY_MEDIUM, "Moyenne"),
+    (SEVERITY_LOW, "Faible"),
+)
+# Mapping sévérité -> délai anti-gel en jours (None => fallback ANTI_GEL_DEFAULT_DAYS).
+ANTI_GEL_DEADLINE_DAYS = {
+    SEVERITY_HIGH: 30,
+    SEVERITY_MEDIUM: 60,
+    SEVERITY_LOW: 90,
+}
+
 USER_TYPES = (
     (ADMIN, ADMIN),
     (VISITOR, VISITOR),
@@ -594,6 +611,23 @@ class Incident(models.Model):
         null=True, blank=True,
         help_text="Horodatage de la prise en compte (passage en 'taken_into_account'). "
                   "Sert au calcul du délai anti-gel (spec T3)."
+    )
+    # --- Anti-gel (spec T3 / §5) : sévérité + drapeaux d'avertissement (75 % / 90 %) ---
+    severity = models.CharField(
+        max_length=10, choices=SEVERITY_CHOICES, null=True, blank=True,
+        default=SEVERITY_MEDIUM,
+        help_text="Sévérité catégorielle. Pilote le délai anti-gel "
+                  "(Élevée 30 j / Moyenne 60 j / Faible 90 j ; défaut/inconnue : 60 j)."
+    )
+    antigel_warned_75 = models.BooleanField(
+        default=False,
+        help_text="Avertissement anti-gel à 75 % du délai déjà envoyé au leader. "
+                  "Remis à False à chaque (re)prise en compte (spec T3)."
+    )
+    antigel_warned_90 = models.BooleanField(
+        default=False,
+        help_text="Avertissement anti-gel à 90 % du délai déjà envoyé au leader. "
+                  "Remis à False à chaque (re)prise en compte (spec T3)."
     )
     # --- Phase 4 : flux de résolution (résolution préparée → validation → définitif) ---
     resolution_submitted_by = models.ForeignKey(

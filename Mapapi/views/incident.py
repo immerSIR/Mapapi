@@ -96,7 +96,13 @@ def engage_incident(incident, leader):
         incident.etat = TAKEN
         incident.taken_by = leader
         incident.taken_in_charge_at = timezone.now()
-        incident.save(update_fields=['etat', 'taken_by', 'taken_in_charge_at'])
+        # Anti-gel (spec T3) : (re)prise en compte => réarmer les avertissements.
+        incident.antigel_warned_75 = False
+        incident.antigel_warned_90 = False
+        incident.save(update_fields=[
+            'etat', 'taken_by', 'taken_in_charge_at',
+            'antigel_warned_75', 'antigel_warned_90',
+        ])
         return True
     return False
 
@@ -985,7 +991,13 @@ class TakeInChargeView(APIView):
             incident.etat = 'taken_into_account'
             incident.take_in_charge_mode = 'internal'
             incident.taken_in_charge_at = timezone.now()
-            incident.save(update_fields=['taken_by', 'etat', 'take_in_charge_mode', 'taken_in_charge_at'])
+            # Anti-gel (spec T3) : (re)prise en compte => réarmer les avertissements.
+            incident.antigel_warned_75 = False
+            incident.antigel_warned_90 = False
+            incident.save(update_fields=[
+                'taken_by', 'etat', 'take_in_charge_mode', 'taken_in_charge_at',
+                'antigel_warned_75', 'antigel_warned_90',
+            ])
 
             collaboration, _ = Collaboration.objects.get_or_create(
                 incident=incident,
@@ -1043,7 +1055,12 @@ class TakeInChargeView(APIView):
             if incident.etat == 'declared':
                 incident.etat = 'taken_into_account'
                 incident.taken_in_charge_at = timezone.now()
-                update_fields.append('taken_in_charge_at')
+                # Anti-gel (spec T3) : (re)prise en compte => réarmer les avertissements.
+                incident.antigel_warned_75 = False
+                incident.antigel_warned_90 = False
+                update_fields += [
+                    'taken_in_charge_at', 'antigel_warned_75', 'antigel_warned_90',
+                ]
             incident.take_in_charge_mode = 'collaborative'
             incident.save(update_fields=update_fields)
 
