@@ -44,7 +44,7 @@ def _get_analyze_url():
     return getattr(
         settings,
         "MODEL_DEPLOY_ANALYZE_URL",
-        os.getenv("MODEL_DEPLOY_ANALYZE_URL", "http://localhost:8001/api1/analyze/"),
+        os.getenv("MODEL_DEPLOY_ANALYZE_URL", "http://localhost:8001/analyze/upload"),
     )
 
 

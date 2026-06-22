@@ -382,14 +382,16 @@ ORANGE_CLIENT_ID = os.environ.get('ORANGE_CLIENT_ID')
 ORANGE_CLIENT_SECRET = os.environ.get('ORANGE_CLIENT_SECRET')
 ORANGE_SENDER_ADDRESS = os.environ.get('ORANGE_SENDER_ADDRESS')
 
-# Model-deploy service (remote AI analysis pipeline)
+# Model-deploy service (remote AI analysis pipeline).
+# NB: the service exposes /analyze, /analyze/upload and /chat — there is NO
+# "/api1" prefix. The photo-upload task posts multipart → /analyze/upload.
 MODEL_DEPLOY_ANALYZE_URL = os.environ.get(
     'MODEL_DEPLOY_ANALYZE_URL',
-    'http://localhost:8001/api1/analyze/',
+    'http://localhost:8001/analyze/upload',
 )
 MODEL_DEPLOY_TIMEOUT = int(os.environ.get('MODEL_DEPLOY_TIMEOUT', 180))
 MODEL_DEPLOY_CHAT_URL = os.environ.get(
     'MODEL_DEPLOY_CHAT_URL',
-    'http://localhost:8001/api1/chat',
+    'http://localhost:8001/chat',
 )
 MODEL_DEPLOY_CHAT_TIMEOUT = int(os.environ.get('MODEL_DEPLOY_CHAT_TIMEOUT', 120))
