@@ -143,7 +143,14 @@ class IncidentByZoneAPIView(generics.CreateAPIView):
             base = (
                 Incident.objects
                 .filter(zone=zone)
-                .select_related('user_id', 'user_id__organisation_member', 'category_id')
+                .select_related(
+                    'user_id', 'user_id__organisation_member', 'category_id',
+                    'taken_by__organisation_member',
+                )
+                .prefetch_related(
+                    'org_assignments__organisation',
+                    'collaboration_set__user__organisation_member',
+                )
                 .order_by('-pk')
             )
             item = visible_incidents_qs(base, request.user)
@@ -170,12 +177,14 @@ class IncidentAPIView(generics.CreateAPIView):
             # distant chaque aller-retour compte (≈80 ms) : 4 requêtes → 3.
             item = (
                 Incident.objects
+                .select_related('taken_by__organisation_member')
                 .prefetch_related(
                     Prefetch(
                         'org_assignments',
                         queryset=IncidentOrgAssignment.objects.select_related('organisation'),
                     ),
                     'category_ids',
+                    'collaboration_set__user__organisation_member',
                 )
                 .get(pk=id)
             )
@@ -259,10 +268,15 @@ class IncidentAPIListView(generics.CreateAPIView):
     def get(self, request, format=None):
         base = (
             Incident.objects
-            .select_related('category_id', 'user_id', 'user_id__organisation_member')
+            .select_related(
+                'category_id', 'user_id', 'user_id__organisation_member',
+                'taken_by__organisation_member',
+            )
             .prefetch_related(
                 'user_id__zones',
                 'category_ids',
+                'org_assignments__organisation',
+                'collaboration_set__user__organisation_member',
             )
             .order_by('-pk')
         )

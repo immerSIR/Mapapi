@@ -163,6 +163,30 @@ class CategorySerializer(ModelSerializer):
         fields = '__all__'
 
 
+class IncidentActingOrgsMixin(serializers.Serializer):
+    """Champs explicites partagés liste + détail (cf. services.incident_orgs) :
+    qui a pris l'incident en charge, et toutes les organisations actives dessus.
+    Permet à une autre organisation de voir, AVANT d'ouvrir l'incident, quelle(s)
+    organisation(s) agissent déjà."""
+    taken_by_organisation = serializers.SerializerMethodField(read_only=True)
+    taken_by_name = serializers.SerializerMethodField(read_only=True)
+    acting_organisations = serializers.SerializerMethodField(read_only=True)
+
+    def get_taken_by_organisation(self, obj):
+        from .services.incident_orgs import taken_by_organisation
+        return taken_by_organisation(obj)
+
+    def get_taken_by_name(self, obj):
+        tb = getattr(obj, 'taken_by', None)
+        if not tb:
+            return None
+        return f"{tb.first_name or ''} {tb.last_name or ''}".strip() or tb.email
+
+    def get_acting_organisations(self, obj):
+        from .services.incident_orgs import acting_organisations
+        return acting_organisations(obj)
+
+
 class IncidentOrgAssignmentNestedSerializer(serializers.ModelSerializer):
     """Lecture seule : assignations org exposées sur le détail d'un incident,
     pour que le front affiche les actions accepter/refuser (spec §2/§3)."""
@@ -175,7 +199,7 @@ class IncidentOrgAssignmentNestedSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
 
-class IncidentSerializer(ModelSerializer):
+class IncidentSerializer(IncidentActingOrgsMixin, ModelSerializer):
     org_assignments = IncidentOrgAssignmentNestedSerializer(many=True, read_only=True)
 
     class Meta:
@@ -215,7 +239,7 @@ class IncidentSerializer(ModelSerializer):
         return data
 
 
-class IncidentGetSerializer(ModelSerializer):
+class IncidentGetSerializer(IncidentActingOrgsMixin, ModelSerializer):
     user_id = UserSerializer()
     category_id = CategorySerializer()
     org_assignments = IncidentOrgAssignmentNestedSerializer(many=True, read_only=True)
