@@ -24,15 +24,23 @@ class OrganisationSerializer(serializers.ModelSerializer):
 class OrganisationMemberSerializer(serializers.ModelSerializer):
     """Serializer pour la gestion des membres d'une organisation."""
     organisation_name = serializers.CharField(source='organisation_member.name', read_only=True)
+    # Rôle web canonique (cf. roles.py) — même source que partout ailleurs, pour
+    # qu'un objet user expose TOUJOURS le rôle de la même façon (pas de confusion
+    # org_role vs user_type côté frontend).
+    web_role = serializers.SerializerMethodField(read_only=True)
 
     class Meta:
         model = User
         fields = [
             'id', 'email', 'first_name', 'last_name', 'phone',
-            'organisation_member', 'organisation_name', 'org_role',
+            'organisation_member', 'organisation_name', 'org_role', 'web_role',
             'agent_code', 'is_active', 'date_joined',
         ]
         read_only_fields = ('id', 'email', 'date_joined', 'agent_code')
+
+    def get_web_role(self, obj):
+        from .roles import get_web_role
+        return get_web_role(obj)
 
 # Secrets d'authentification jamais exposés en lecture par l'API.
 # Ceux-ci sont EXCLUS de la sortie (ni lus ni écrits via ces serializers).
