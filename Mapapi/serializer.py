@@ -431,7 +431,38 @@ class PredictionSerializer(serializers.ModelSerializer):
             'error_message', 'created_at', 'updated_at',
         )
 
-class CollaborationSerializer(ModelSerializer):
+def _person_brief(user):
+    """Représentation explicite et minimale d'une personne + son organisation."""
+    if not user:
+        return None
+    org = getattr(user, 'organisation_member', None)
+    return {
+        'id': user.id,
+        'name': f"{user.first_name or ''} {user.last_name or ''}".strip() or user.email,
+        'email': user.email,
+        'organisation_id': org.id if org else None,
+        'organisation_name': org.name if org else (getattr(user, 'organisation', None) or None),
+    }
+
+
+class CollaborationPartiesMixin(serializers.Serializer):
+    """Expose EXPLICITEMENT l'émetteur et le récepteur d'une demande de
+    collaboration, pour lever la confusion côté frontend (#8) :
+    - sender (émetteur)  = l'organisation qui DEMANDE à rejoindre (collaboration.user)
+    - receiver (récepteur) = le leader qui REÇOIT la demande (incident.taken_by)
+    """
+    sender = serializers.SerializerMethodField(read_only=True)
+    receiver = serializers.SerializerMethodField(read_only=True)
+
+    def get_sender(self, obj):
+        return _person_brief(getattr(obj, 'user', None))
+
+    def get_receiver(self, obj):
+        incident = getattr(obj, 'incident', None)
+        return _person_brief(getattr(incident, 'taken_by', None)) if incident else None
+
+
+class CollaborationSerializer(CollaborationPartiesMixin, ModelSerializer):
     # Nom de l'organisation du collaborateur (lecture seule)
     organisation_name = serializers.CharField(
         source='user.organisation_member.name', read_only=True, default=None
@@ -486,7 +517,7 @@ class CollaborationSerializer(ModelSerializer):
         return data
 
 
-class CollaborationEnrichedSerializer(ModelSerializer):
+class CollaborationEnrichedSerializer(CollaborationPartiesMixin, ModelSerializer):
     """Serializer enrichi pour la vue collaboration dashboard."""
     organisation_name = serializers.SerializerMethodField()
     user_role = serializers.CharField(source='role', read_only=True)
@@ -502,7 +533,7 @@ class CollaborationEnrichedSerializer(ModelSerializer):
         model = Collaboration
         fields = [
             'id', 'incident', 'user', 'status', 'role',
-            'organisation_name', 'user_role',
+            'organisation_name', 'user_role', 'sender', 'receiver',
             'incident_title', 'incident_description', 'incident_zone',
             'incident_etat', 'incident_progress',
             'start_date', 'end_date',

@@ -41,7 +41,8 @@ class CollaborationDashboardView(generics.ListAPIView):
         qs = Collaboration.objects.filter(
             Q(user=user) | Q(incident__taken_by=user)
         ).select_related(
-            'incident', 'user', 'user__organisation_member'
+            'incident', 'user', 'user__organisation_member',
+            'incident__taken_by', 'incident__taken_by__organisation_member',
         ).order_by('-created_at')
 
         # --- Filtre par statut ---
@@ -106,7 +107,8 @@ class CollaborationView(generics.CreateAPIView, generics.ListAPIView):
         qs = Collaboration.objects.filter(
             Q(user=user) | Q(incident__taken_by=user)
         ).select_related(
-            'incident', 'user', 'user__organisation_member'
+            'incident', 'user', 'user__organisation_member',
+            'incident__taken_by', 'incident__taken_by__organisation_member',
         ).order_by('-id')
 
         # --- Filtres optionnels ---
