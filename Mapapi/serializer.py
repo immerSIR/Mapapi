@@ -34,11 +34,21 @@ class OrganisationMemberSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ('id', 'email', 'date_joined', 'agent_code')
 
+# Secrets d'authentification jamais exposés en lecture par l'API.
+# Ceux-ci sont EXCLUS de la sortie (ni lus ni écrits via ces serializers).
+SENSITIVE_USER_FIELDS = (
+    'otp', 'otp_expiration', 'verification_token', 'pin_code',
+)
+# password : accepté en entrée (création/MAJ via set_password) mais jamais renvoyé.
+PASSWORD_WRITE_ONLY = {'password': {'write_only': True}}
+
+
 class UserRegisterSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
-        fields = '__all__'
+        exclude = SENSITIVE_USER_FIELDS
         depth = 1
+        extra_kwargs = PASSWORD_WRITE_ONLY
 
     def create(self, validated_data):
         user = User(
@@ -67,7 +77,11 @@ class UserSerializer(ModelSerializer):
 
     class Meta:
         model = User
-        exclude = ('user_permissions', 'is_superuser', 'is_active', 'is_staff')
+        exclude = ('user_permissions', 'is_superuser', 'is_active', 'is_staff') \
+            + SENSITIVE_USER_FIELDS
+        # password reste accepté en entrée (create() appelle set_password) mais
+        # n'est jamais renvoyé.
+        extra_kwargs = PASSWORD_WRITE_ONLY
 
     def get_web_role(self, obj):
         from .roles import get_web_role
@@ -109,7 +123,8 @@ class UserEluSerializer(serializers.ModelSerializer):
 class UserPutSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
-        fields = '__all__'
+        exclude = SENSITIVE_USER_FIELDS
+        extra_kwargs = PASSWORD_WRITE_ONLY
 
 
 class RegisterSerializer(serializers.ModelSerializer):

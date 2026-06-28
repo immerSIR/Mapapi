@@ -108,6 +108,8 @@ SPECTACULAR_SETTINGS = {
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
+    # Rend toutes les routes /MapApi/ insensibles au slash final (cf. middleware).
+    'Mapapi.middleware.SlashInsensitiveMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'Mapapi.middleware.OrganisationFromSubdomainMiddleware',
     'django.middleware.common.CommonMiddleware',
