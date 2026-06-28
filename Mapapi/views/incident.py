@@ -442,19 +442,10 @@ class MyInterventionsView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        user = request.user
-        org = getattr(user, 'organisation_member', None)
-
-        q = Q(taken_by=user) | Q(assignments__agent=user)
-        if org:
-            q |= Q(taken_by__organisation_member=org)
-            q |= Q(org_assignments__organisation=org,
-                   org_assignments__status=ORG_ASSIGNMENT_ACCEPTED)
-            q |= Q(collaboration__user__organisation_member=org,
-                   collaboration__status=COLLAB_STATUS_ACCEPTED)
+        from ..services.incident_orgs import org_acting_q
 
         incidents = (
-            Incident.objects.filter(q)
+            Incident.objects.filter(org_acting_q(request.user))
             .exclude(is_deleted=True)
             .distinct()
             .select_related('taken_by__organisation_member', 'user_id', 'category_id')
@@ -791,6 +782,9 @@ class IncidentFilterView(APIView):
         filter_type = request.query_params.get('filter_type')
         custom_start = request.query_params.get('custom_start')
         custom_end = request.query_params.get('custom_end')
+        # scope : un seul URL pour la carte du dashboard (cf. #4).
+        #   all/tous (défaut) | mine/interne | resolved/resolu | unresolved/non_resolu
+        scope = (request.query_params.get('scope') or 'all').lower()
 
         # Carte du dashboard : on ne tire que les colonnes scalaires utiles aux
         # marqueurs (cf. IncidentMapSerializer) pour éviter le N+1 d'IncidentSerializer.
@@ -798,6 +792,20 @@ class IncidentFilterView(APIView):
             'id', 'title', 'lattitude', 'longitude', 'etat', 'taken_by',
             'is_deleted', 'severity', 'created_at',
         )
+
+        # --- Scope (orthogonal au filtre de date ci-dessous) ---
+        resolved_states = [RESOLVED, RESOLVED_DEFINITIVE, IN_VALIDATION]
+        if scope in ('mine', 'interne', 'internal'):
+            from ..services.incident_orgs import org_acting_q
+            if request.user and request.user.is_authenticated:
+                incidents = incidents.filter(org_acting_q(request.user)).distinct()
+            else:
+                incidents = incidents.none()
+        elif scope in ('resolved', 'resolu', 'résolu'):
+            incidents = incidents.filter(etat__in=resolved_states)
+        elif scope in ('unresolved', 'non_resolu', 'non-resolu', 'active'):
+            incidents = incidents.exclude(etat__in=resolved_states)
+        # scope all/tous : aucun filtre
 
         if filter_type == 'today':
             incidents = incidents.filter(created_at__date=timezone.now().date())

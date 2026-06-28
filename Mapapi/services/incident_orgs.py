@@ -6,7 +6,25 @@ en charge, et la liste de toutes les organisations qui agissent dessus. Conçu
 pour s'appuyer sur des relations préchargées (select_related / prefetch_related)
 afin d'éviter le N+1 en liste.
 """
+from django.db.models import Q
+
 from ..models import ORG_ASSIGNMENT_ACCEPTED, COLLAB_STATUS_ACCEPTED
+
+
+def org_acting_q(user):
+    """Filtre Q : incidents sur lesquels l'utilisateur (ou son organisation) agit
+    réellement — a pris en charge (perso/org), org assignée acceptée, collaboration
+    acceptée de son org, ou agent assigné. Source unique partagée par
+    /my-interventions/ et le scope ``mine`` de /incident-filter/."""
+    q = Q(taken_by=user) | Q(assignments__agent=user)
+    org = getattr(user, 'organisation_member', None)
+    if org:
+        q |= Q(taken_by__organisation_member=org)
+        q |= Q(org_assignments__organisation=org,
+               org_assignments__status=ORG_ASSIGNMENT_ACCEPTED)
+        q |= Q(collaboration__user__organisation_member=org,
+               collaboration__status=COLLAB_STATUS_ACCEPTED)
+    return q
 
 RELATION_LEADER = 'leader'        # a pris l'incident en charge (taken_by)
 RELATION_ASSIGNED = 'assigned'    # assignée par le Super Admin et a accepté
