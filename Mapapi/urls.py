@@ -95,6 +95,7 @@ urlpatterns = [
     path('incident-filter/', IncidentFilterView.as_view(), name='incident_filter'),
     path('incidents/dashboard-stats/', IncidentDashboardStatsView.as_view(), name='incident-dashboard-stats'),
     path('my-incidents/', MyIncidentsView.as_view(), name='my-incidents'),
+    path('my-interventions/', MyInterventionsView.as_view(), name='my-interventions'),
     path('org-incidents/', OrgIncidentsView.as_view(), name='org-incidents'),
     path('incidents/<int:incident_id>/prediction/', IncidentPredictionView.as_view(), name='incident-prediction'),
     path('incidents/<int:incident_id>/prediction/retry/', RetryIncidentPredictionView.as_view(), name='incident-prediction-retry'),
@@ -226,6 +227,7 @@ urlpatterns = [
     path('incidents/<int:incident_id>/reject-resolution/', RejectResolutionView.as_view(), name='incident-reject-resolution'),
     path('incidents/<int:incident_id>/report-to-admin/', ReportToAdminView.as_view(), name='incident-report-to-admin'),
     path('incidents/<int:incident_id>/toggle-public/', ToggleIncidentPublicView.as_view(), name='incident-toggle-public'),
+    path('incidents/<int:incident_id>/reports/', IncidentReportsView.as_view(), name='incident-reports'),
     path('incidents/<int:incident_id>/assignments/', IncidentAssignmentListCreateView.as_view(), name='incident-assignment-list'),
     path('incidents/<int:incident_id>/assignments/<int:pk>/', IncidentAssignmentDetailView.as_view(), name='incident-assignment-detail'),
 

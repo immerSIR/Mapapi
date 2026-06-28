@@ -301,6 +301,22 @@ class RapportGetSerializer(ModelSerializer):
         fields = '__all__'
 
 
+class IncidentReportSerializer(ModelSerializer):
+    """Rapport d'un agent vu depuis un incident (page Mes interventions / détail
+    collaboration). Expose explicitement l'auteur + son organisation."""
+    author = serializers.SerializerMethodField(read_only=True)
+
+    class Meta:
+        model = Rapport
+        fields = (
+            'id', 'details', 'type', 'statut', 'date_livraison', 'disponible',
+            'file', 'created_at', 'incident', 'author',
+        )
+
+    def get_author(self, obj):
+        return _person_brief(obj.user_id)
+
+
 class ParticipateSerializer(ModelSerializer):
     class Meta:
         model = Participate

@@ -27,6 +27,7 @@ from ..models import (
     ORG_ASSIGNMENT_PENDING, ORG_ASSIGNMENT_ACCEPTED, ORG_ASSIGNMENT_DECLINED,
     Prediction, PredictionStatus, Notification,
     ChatHistory, CHAT_ROLE_USER, CHAT_ROLE_ASSISTANT,
+    Rapport, IncidentAssignment,
 )
 from ..permissions import (
     IsIncidentLeader, IsSuperAdminOrOrgOwnIncident, IsSuperAdmin,
@@ -408,8 +409,96 @@ class OrgIncidentsView(generics.ListAPIView):
         # source == 'all' : pas de filtre supplémentaire
     
         qs = qs.filter(take_in_charge_mode__iexact='internal').exclude(take_in_charge_mode__isnull=True)
-        
+
         return qs.order_by('-created_at')
+
+
+def _assigned_agent_dict(assignment):
+    """Représentation explicite d'un agent assigné à un incident."""
+    ag = assignment.agent
+    org = getattr(ag, 'organisation_member', None) if ag else None
+    return {
+        'id': ag.id if ag else None,
+        'name': (f"{ag.first_name or ''} {ag.last_name or ''}".strip() or ag.email) if ag else None,
+        'email': ag.email if ag else None,
+        'phone': getattr(ag, 'phone', None) if ag else None,
+        'org_role': getattr(ag, 'org_role', None) if ag else None,
+        'organisation_id': org.id if org else None,
+        'organisation_name': org.name if org else None,
+        'assignment_status': assignment.status,
+        'deadline': assignment.deadline,
+    }
+
+
+class MyInterventionsView(APIView):
+    """GET /my-interventions/ — incidents sur lesquels l'utilisateur (ou son
+    organisation) travaille réellement, chacun avec TOUS les agents assignés et
+    le nombre de rapports. Les rapports détaillés d'un incident sont servis par
+    GET /incidents/<id>/reports/.
+
+    « Travaille dessus » = a pris l'incident en charge (perso ou via son org),
+    org assignée et acceptée, collaboration acceptée de son org, ou agent assigné.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        user = request.user
+        org = getattr(user, 'organisation_member', None)
+
+        q = Q(taken_by=user) | Q(assignments__agent=user)
+        if org:
+            q |= Q(taken_by__organisation_member=org)
+            q |= Q(org_assignments__organisation=org,
+                   org_assignments__status=ORG_ASSIGNMENT_ACCEPTED)
+            q |= Q(collaboration__user__organisation_member=org,
+                   collaboration__status=COLLAB_STATUS_ACCEPTED)
+
+        incidents = (
+            Incident.objects.filter(q)
+            .exclude(is_deleted=True)
+            .distinct()
+            .select_related('taken_by__organisation_member', 'user_id', 'category_id')
+            .prefetch_related(
+                'org_assignments__organisation',
+                'collaboration_set__user__organisation_member',
+                'assignments__agent__organisation_member',
+                'incident_rapport',
+            )
+            .order_by('-created_at')
+        )
+
+        data = []
+        for inc in incidents:
+            inc_data = IncidentGetSerializer(inc).data
+            inc_data['assigned_agents'] = [_assigned_agent_dict(a) for a in inc.assignments.all()]
+            inc_data['reports_count'] = len(inc.incident_rapport.all())
+            data.append(inc_data)
+        return Response(data, status=status.HTTP_200_OK)
+
+
+class IncidentReportsView(APIView):
+    """GET /incidents/<incident_id>/reports/ — tous les rapports d'agents liés à
+    l'incident (FK incident OU M2M incidents), avec auteur + organisation.
+    Sert la page Mes interventions ET le détail de collaboration (rapports des
+    agents de chaque organisation travaillant sur l'incident)."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, incident_id):
+        try:
+            incident = Incident.objects.get(pk=incident_id)
+        except Incident.DoesNotExist:
+            return Response({"error": "Incident non trouvé."}, status=status.HTTP_404_NOT_FOUND)
+        reports = (
+            Rapport.objects
+            .filter(Q(incident=incident) | Q(incidents=incident))
+            .select_related('user_id', 'user_id__organisation_member')
+            .distinct()
+            .order_by('-created_at')
+        )
+        return Response(
+            IncidentReportSerializer(reports, many=True).data,
+            status=status.HTTP_200_OK,
+        )
 
 
 class IncidentAssignmentListCreateView(generics.ListCreateAPIView):
