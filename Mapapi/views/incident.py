@@ -2805,9 +2805,11 @@ class IncidentChatView(APIView):
         except Incident.DoesNotExist:
             return Response({"error": "Incident non trouvé."}, status=status.HTTP_404_NOT_FOUND)
 
+        # Historique privé : limité à l'utilisateur connecté (chaque (user, incident)
+        # a sa propre conversation avec l'assistant IA).
         history = (
             incident.chat_messages
-            .filter(role__in=[CHAT_ROLE_USER, CHAT_ROLE_ASSISTANT])
+            .filter(user=request.user, role__in=[CHAT_ROLE_USER, CHAT_ROLE_ASSISTANT])
             .order_by('created_at', 'id')
         )
         return Response(
@@ -2850,9 +2852,10 @@ class IncidentChatView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # Build the conversation payload from the persisted history.
+        # Build the conversation payload from the persisted history — scoped to
+        # the current user so the LLM only sees this user's own thread.
         history_qs = incident.chat_messages.filter(
-            role__in=[CHAT_ROLE_USER, CHAT_ROLE_ASSISTANT]
+            user=request.user, role__in=[CHAT_ROLE_USER, CHAT_ROLE_ASSISTANT]
         ).order_by('created_at', 'id')
         messages = [{"role": item.role, "content": item.content} for item in history_qs]
         messages.append({"role": CHAT_ROLE_USER, "content": user_message})
@@ -2879,7 +2882,7 @@ class IncidentChatView(APIView):
 
         ChatHistory.objects.create(
             incident=incident,
-            user=None,  # assistant message has no user
+            user=request.user,  # tie the reply to the asking user → private per-user thread
             role=CHAT_ROLE_ASSISTANT,
             content=assistant_response,
         )
