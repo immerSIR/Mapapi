@@ -33,4 +33,8 @@ pytest-django==4.5.2
 drf-spectacular-sidecar>=2024.3.4
 channels==4.1.0
 channels-redis==4.2.0
+# Épinglé < 5.1 : redis-py >= 5.1 applique un read-timeout sur les commandes
+# bloquantes (BZPOPMIN), ce qui casse la boucle receive de channels-redis 4.2.0
+# → les WebSockets se fermaient avec le code 1011 après quelques secondes d'inactivité.
+redis==5.0.8
 whitenoise==6.7.0
