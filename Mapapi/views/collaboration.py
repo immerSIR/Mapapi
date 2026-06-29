@@ -16,6 +16,7 @@ from drf_spectacular.types import OpenApiTypes
 from ..models import (
     Collaboration, Incident, Notification,
     COLLAB_ROLE_LEADER, COLLAB_ROLE_CONTRIBUTOR, COLLAB_ROLE_OBSERVER,
+    COLLAB_STATUS_PENDING, COLLAB_STATUS_ACCEPTED,
 )
 from ..serializer import CollaborationSerializer, CollaborationEnrichedSerializer
 from ..permissions import IsOrgAdmin
@@ -261,12 +262,18 @@ class CollaborationView(generics.CreateAPIView, generics.ListAPIView):
         incident = serializer.validated_data.get('incident')
         role = serializer.validated_data.get('role')
 
-        # Empêcher doublon
-        if Collaboration.objects.filter(incident=incident, user=request.user).exists():
+        # Empêcher doublon — uniquement si une collaboration ACTIVE existe déjà
+        # (pending/accepted). Une demande précédemment REFUSÉE (declined/refused) ou
+        # TERMINÉE peut être relancée : on supprime l'ancienne ligne (contrainte unique
+        # incident+user) pour en recréer une et re-notifier le leader.
+        existing = Collaboration.objects.filter(incident=incident, user=request.user).first()
+        if existing and existing.status in (COLLAB_STATUS_PENDING, COLLAB_STATUS_ACCEPTED):
             return Response(
-                {"error": "Vous avez déjà une collaboration sur cet incident."},
+                {"error": "Vous avez déjà une collaboration active sur cet incident."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+        if existing:
+            existing.delete()
 
         # --- Détermination du statut initial ---
         # Observer : toujours auto-accepté (toute org a le droit d'observer)
