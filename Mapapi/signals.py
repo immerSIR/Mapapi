@@ -1,8 +1,13 @@
-from django.db.models.signals import post_save
+from django.db.models.signals import post_save, pre_save
 from django.dispatch import receiver
 from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
-from .models import Collaboration, Notification, User, DiscussionMessage, IncidentTask
+from .models import Collaboration, Notification, User, DiscussionMessage, IncidentTask, UserAction
+
+
+def _actor_label(user):
+    org = getattr(getattr(user, 'organisation_member', None), 'name', None)
+    return org or (user.get_full_name() or user.email if user else 'Quelqu\'un')
 from .Send_mails import send_email
 import logging
 
@@ -67,6 +72,15 @@ def ws_push_task(sender, instance, created, **kwargs):
         'updated_at': instance.updated_at.isoformat() if getattr(instance, 'updated_at', None) else None,
     })
 
+@receiver(pre_save, sender=Collaboration)
+def _capture_collab_old_status(sender, instance, **kwargs):
+    """Capture l'ancien statut pour détecter accept/decline dans le post_save."""
+    if instance.pk:
+        instance._old_status = Collaboration.objects.filter(pk=instance.pk).values_list('status', flat=True).first()
+    else:
+        instance._old_status = None
+
+
 @receiver(post_save, sender=Collaboration)
 def ws_push_collaboration(sender, instance, created, **kwargs):
     """Temps réel : pousse les créations/màj de collaboration à l'émetteur ET au
@@ -91,6 +105,22 @@ def ws_push_collaboration(sender, instance, created, **kwargs):
     for uid in targets:
         if uid:
             _ws_broadcast(f"collaborations_{uid}", payload)
+    # Journalise l'activité (flux d'activité + journal d'actions).
+    try:
+        if created:
+            UserAction.objects.create(
+                user=instance.user,
+                action=f"{_actor_label(instance.user)} a demandé une collaboration sur un incident."[:255],
+            )
+        elif getattr(instance, '_old_status', None) != instance.status and instance.status in ('accepted', 'declined'):
+            actor = getattr(getattr(instance, 'incident', None), 'taken_by', None) or instance.user
+            verbe = "a accepté" if instance.status == 'accepted' else "a refusé"
+            UserAction.objects.create(
+                user=actor,
+                action=f"{_actor_label(actor)} {verbe} une demande de collaboration."[:255],
+            )
+    except Exception as exc:  # ne jamais casser l'écriture DB
+        logger.warning("log activité collaboration échoué: %s", exc)
 
 
 @receiver(post_save, sender=Collaboration)

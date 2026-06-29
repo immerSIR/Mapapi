@@ -768,8 +768,10 @@ class OrganisationMemberDetailView(APIView):
             if new_role not in [ORG_ROLE_ADMIN, ORG_ROLE_BUREAU, ORG_ROLE_FIELD]:
                 return Response({"error": "Rôle invalide."}, status=status.HTTP_400_BAD_REQUEST)
             # Règle anti-verrouillage : on ne peut pas rétrograder le DERNIER admin actif de l'org.
+            # Le Super Admin peut l'outrepasser (gestion plateforme).
             if (
-                member.org_role == ORG_ROLE_ADMIN
+                not is_super_admin(request.user)
+                and member.org_role == ORG_ROLE_ADMIN
                 and new_role != ORG_ROLE_ADMIN
                 and member.is_active
                 and _active_admin_count(member.organisation_member, exclude_user_id=member.pk) == 0
@@ -802,8 +804,10 @@ class OrganisationMemberDetailView(APIView):
             return Response({"error": "Membre non trouvé dans cette organisation."}, status=status.HTTP_404_NOT_FOUND)
 
         # Règle anti-verrouillage : on ne peut pas retirer le DERNIER admin actif de l'org.
+        # Le Super Admin peut l'outrepasser (gestion plateforme : il pourra ré-affecter un admin).
         if (
-            member.org_role == ORG_ROLE_ADMIN
+            not is_super_admin(request.user)
+            and member.org_role == ORG_ROLE_ADMIN
             and member.is_active
             and _active_admin_count(member.organisation_member, exclude_user_id=member.pk) == 0
         ):

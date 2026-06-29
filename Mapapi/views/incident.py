@@ -366,6 +366,20 @@ class IncidentAPIListView(generics.CreateAPIView):
             .order_by('-pk')
         )
         items = visible_incidents_qs(base, request.user)
+        # Recherche + filtres (onglet incidents) : ?search= (titre/description/zone),
+        # ?etat= (statut), ?severity=. Combinables.
+        p = request.query_params
+        search = (p.get('search') or '').strip()
+        if search:
+            items = items.filter(
+                Q(title__icontains=search) | Q(description__icontains=search) | Q(zone__icontains=search)
+            )
+        etat = p.get('etat') or p.get('status')
+        if etat:
+            items = items.filter(etat=etat)
+        severity = p.get('severity')
+        if severity:
+            items = items.filter(severity=severity)
         paginator = IncidentPagination()
         result_page = paginator.paginate_queryset(items, request)
         serializer = IncidentGetSerializer(result_page, many=True)
