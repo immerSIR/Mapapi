@@ -199,7 +199,12 @@ DATABASES = {
         # serveur ne survivent pas entre transactions → requis avec CONN_MAX_AGE.
         'DISABLE_SERVER_SIDE_CURSORS': True,
         'OPTIONS': {
-            'sslmode': 'require',
+            # 'require' par défaut (Supabase) ; override en local/CI via DB_SSLMODE.
+            'sslmode': os.environ.get('DB_SSLMODE', 'require'),
+            # Schéma applicatif = public (best practice). Surcharge le search_path
+            # par défaut du rôle Supabase (qui inclut 'extensions'). Override possible
+            # via DB_SEARCH_PATH.
+            'options': '-c search_path=' + os.environ.get('DB_SEARCH_PATH', 'public'),
         },
     },
 }

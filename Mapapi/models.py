@@ -217,8 +217,17 @@ ORG_ASSIGNMENT_STATUSES = (
 )
 
 
+class UUIDModel(models.Model):
+    """Base abstraite : clé primaire UUID (au lieu d'un entier auto-incrémenté)
+    pour éviter l'énumération/devinette des identifiants (faille IDOR)."""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+
+    class Meta:
+        abstract = True
+
+
 # Modèle d'organisation pour gérer les organisations liées aux utilisateurs
-class Organisation(models.Model):
+class Organisation(UUIDModel):
     name = models.CharField(max_length=255, unique=True)
     acronym = models.CharField(max_length=50, blank=True, null=True)
     is_premium = models.BooleanField(default=False)
@@ -326,6 +335,8 @@ class UserManager(BaseUserManager):
 
 
 class User(AbstractBaseUser, PermissionsMixin):
+    # Clé primaire UUID (cf. UUIDModel ; User n'en hérite pas car AbstractBaseUser).
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     groups = models.ManyToManyField(
         Group,
         related_name="mapapi_user_groups",
@@ -477,7 +488,7 @@ class User(AbstractBaseUser, PermissionsMixin):
         return check_password(pin, self.pin_code)
 
 
-class FieldReport(models.Model):
+class FieldReport(UUIDModel):
     """Rapport de déplacement d'un agent de terrain sur le lieu d'un incident."""
     agent = models.ForeignKey(User, on_delete=models.CASCADE, related_name='field_reports')
     incident = models.ForeignKey('Incident', on_delete=models.CASCADE, related_name='field_reports')
@@ -503,7 +514,7 @@ class FieldReport(models.Model):
         ordering = ('-visited_at',)
 
 
-class IncidentAssignment(models.Model):
+class IncidentAssignment(UUIDModel):
     incident = models.ForeignKey('Incident', on_delete=models.CASCADE, related_name='assignments')
     agent = models.ForeignKey(User, on_delete=models.CASCADE, related_name='incident_assignments')
     assigned_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='created_incident_assignments')
@@ -520,7 +531,7 @@ class IncidentAssignment(models.Model):
         return f"{self.incident} assigné à {self.agent} avant {self.deadline:%d/%m/%Y %H:%M}"
 
 
-class IncidentOrgAssignment(models.Model):
+class IncidentOrgAssignment(UUIDModel):
     """Assignation d'un incident à une ORGANISATION par le Super Admin (spec §2/§3, T5).
 
     Distinct du modèle AGENT-centrique `IncidentAssignment` : ici la cible est
@@ -551,7 +562,7 @@ class IncidentOrgAssignment(models.Model):
         return f"Incident {self.incident_id} → orga {self.organisation_id} ({self.status})"
 
 
-class Incident(models.Model):
+class Incident(UUIDModel):
     title = models.CharField(max_length=250, blank=True,
                              null=True)
     zone = models.CharField(max_length=250, blank=False,
@@ -689,7 +700,7 @@ class Incident(models.Model):
         return False
 
 
-class Evenement(models.Model):
+class Evenement(UUIDModel):
     title = models.CharField(max_length=255, blank=True,
                              null=True)
     zone = models.CharField(max_length=255, blank=False,
@@ -717,7 +728,7 @@ class Evenement(models.Model):
         return self.zone + ' '
 
 
-class Contact(models.Model):
+class Contact(UUIDModel):
     objet = models.CharField(max_length=250, blank=False,
                              null=False)
     message = models.TextField(max_length=500, blank=True, null=True)
@@ -729,7 +740,7 @@ class Contact(models.Model):
         return self.objet + ' '
 
 
-class Communaute(models.Model):
+class Communaute(UUIDModel):
     name = models.CharField(max_length=250, blank=False,
                             null=False)
     zone = models.ForeignKey('Zone', db_column='zone_communaute_id', related_name='Zone_communaute',
@@ -740,7 +751,7 @@ class Communaute(models.Model):
         return self.name + ' '
 
 
-class Rapport(models.Model):
+class Rapport(UUIDModel):
     details = models.CharField(max_length=500, blank=False,
                                null=False)
     type = models.CharField(max_length=500, blank=True,
@@ -765,7 +776,7 @@ class Rapport(models.Model):
         return self.details + ' '
 
 
-class Participate(models.Model):
+class Participate(UUIDModel):
     evenement_id = models.ForeignKey('Evenement', db_column='event_participate_id', related_name='event_participate',
                                      on_delete=models.CASCADE, null=True)
     user_id = models.ForeignKey('User', db_column='user_participate_id', related_name='user_participate',
@@ -773,7 +784,7 @@ class Participate(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
 
-class Zone(models.Model):
+class Zone(UUIDModel):
     name = models.CharField(max_length=250, blank=False,
                             null=False, unique=True)
     description = models.TextField(max_length=500, blank=True, null=True)  # Added description field
@@ -790,7 +801,7 @@ class Zone(models.Model):
         return self.name + ' '
 
 
-class Message(models.Model):
+class Message(UUIDModel):
     objet = models.CharField(max_length=250, blank=False,
                              null=False)
     message = models.CharField(max_length=250, blank=False, null=False)
@@ -807,7 +818,7 @@ class Message(models.Model):
         return self.objet + ' '
 
 
-class ResponseMessage(models.Model):
+class ResponseMessage(UUIDModel):
     response = models.CharField(max_length=250, blank=False, null=False)
 
     message = models.ForeignKey('Message', db_column='mess_resp_id', related_name='resp_mess', on_delete=models.CASCADE,
@@ -820,7 +831,7 @@ class ResponseMessage(models.Model):
         return self.response + ' '
 
 
-class Category(models.Model):
+class Category(UUIDModel):
     name = models.CharField(max_length=250, blank=False,
                             null=False, unique=True)
     description = models.TextField(max_length=500, blank=True, null=True)  # Added description field
@@ -832,7 +843,7 @@ class Category(models.Model):
         return self.name + ' '
 
 
-class Indicateur(models.Model):
+class Indicateur(UUIDModel):
     name = models.CharField(max_length=250, blank=False,
                             null=False, unique=True)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -841,7 +852,7 @@ class Indicateur(models.Model):
         return self.name + ' '
 
 
-class PasswordReset(models.Model):
+class PasswordReset(UUIDModel):
     code = models.CharField(max_length=7, blank=False, null=False)
     user = models.ForeignKey(settings.AUTH_USER_MODEL, blank=False, null=False, on_delete=models.CASCADE)
     date_created = models.DateTimeField(auto_now_add=True)
@@ -849,19 +860,19 @@ class PasswordReset(models.Model):
     date_used = models.DateTimeField(null=True)
 
 
-class ImageBackground(models.Model):
+class ImageBackground(UUIDModel):
     photo = models.ImageField(null=True, blank=True)
 
     created_at = models.DateTimeField(auto_now_add=True)
 
 # verification code otp
-class PhoneOTP(models.Model):
+class PhoneOTP(UUIDModel):
     phone_number = models.CharField(max_length=15)
     otp_code = models.CharField(max_length=6)
     created_at = models.DateTimeField(auto_now_add=True)
 
 # Collaboration table
-class Collaboration(models.Model):
+class Collaboration(UUIDModel):
     incident = models.ForeignKey('Incident', blank=False, null=False, on_delete=models.CASCADE)
     user = models.ForeignKey(User, blank=False, null=False, on_delete=models.CASCADE)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -879,7 +890,7 @@ class Collaboration(models.Model):
         return f"Collaboration on {self.incident} by {self.user} ({self.role})"
     
 # Collaboration table
-class Colaboration(models.Model):
+class Colaboration(UUIDModel):
     incident = models.ForeignKey('Incident', blank=False, null=False, on_delete=models.CASCADE)
     user = models.ForeignKey(User, blank=False, null=False, on_delete=models.CASCADE)
     end_date = models.DateField()
@@ -899,7 +910,7 @@ class PredictionStatus(models.TextChoices):
     FAILED = "failed", "Failed"
 
 
-class Prediction(models.Model):
+class Prediction(UUIDModel):
     # --- Legacy fields (kept nullable for backward compatibility) ---
     # NOTE: ``incident_id`` was the legacy CharField. It has been renamed to
     # ``legacy_incident_id`` because the new ``incident`` ForeignKey below
@@ -1002,7 +1013,7 @@ class Prediction(models.Model):
         super().save(*args, **kwargs)
 
 
-class Notification(models.Model):
+class Notification(UUIDModel):
     user = models.ForeignKey(User, on_delete=models.CASCADE)
     message = models.CharField(max_length=255)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -1024,7 +1035,7 @@ CHAT_ROLES = (
 )
 
 
-class ChatHistory(models.Model):
+class ChatHistory(UUIDModel):
     # --- Legacy fields (kept nullable for backward compatibility) ---
     session_id = models.CharField(max_length=255, db_index=True, blank=True, null=True)
     question = models.TextField(db_index=True, blank=True, null=True)
@@ -1049,7 +1060,7 @@ class ChatHistory(models.Model):
     def __str__(self):
         return f"[{self.role}] {self.content[:60]}"
 
-class UserAction(models.Model):
+class UserAction(UUIDModel):
     user = models.ForeignKey(User, on_delete=models.CASCADE, blank=False, null=False)
     action = models.CharField(max_length=255)
     timeStamp = models.DateField(auto_now_add=True)
@@ -1057,7 +1068,7 @@ class UserAction(models.Model):
     def __str__(self):
         return self.action
     
-class DiscussionMessage(models.Model):
+class DiscussionMessage(UUIDModel):
     incident = models.ForeignKey('Incident', on_delete=models.CASCADE)
     collaboration = models.ForeignKey(Collaboration, on_delete=models.CASCADE)
     sender = models.ForeignKey(User, on_delete=models.CASCADE)
@@ -1085,7 +1096,7 @@ class DiscussionMessage(models.Model):
 
 
 # --- Tâches d'incident (gérées par le leader) ---
-class IncidentTask(models.Model):
+class IncidentTask(UUIDModel):
     incident = models.ForeignKey('Incident', related_name='tasks', on_delete=models.CASCADE)
     title = models.CharField(max_length=255)
     description = models.TextField(blank=True, null=True)
@@ -1162,7 +1173,7 @@ class IncidentTask(models.Model):
 
 
 # --- Suggestions de partenaires (par contributors, validées par le leader) ---
-class PartnerSuggestion(models.Model):
+class PartnerSuggestion(UUIDModel):
     incident = models.ForeignKey('Incident', related_name='partner_suggestions', on_delete=models.CASCADE)
     suggested_by = models.ForeignKey(User, related_name='suggestions_made', on_delete=models.CASCADE,
                                      help_text="Contributeur à l'origine de la suggestion.")
@@ -1182,12 +1193,12 @@ class PartnerSuggestion(models.Model):
     def __str__(self):
         return f"Suggestion {self.suggested_partner} ({self.suggested_role}) on {self.incident} - {self.status}"
 
-class OrganisationTag(models.Model):
+class OrganisationTag(UUIDModel):
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='incident_preferences')
     incident_type = models.CharField(max_length=255)
 
 
-class IVRCall(models.Model):
+class IVRCall(UUIDModel):
     call_sid = models.CharField(max_length=255, unique=True)
     phone_number = models.CharField(max_length=20)
     status = models.CharField(max_length=50, default='initiated')
@@ -1204,7 +1215,7 @@ class IVRCall(models.Model):
         return f"IVR Call {self.call_sid} - {self.phone_number}"
 
 
-class IVRInteraction(models.Model):
+class IVRInteraction(UUIDModel):
     ivr_call = models.ForeignKey('IVRCall', on_delete=models.CASCADE, related_name='interactions')
     step = models.CharField(max_length=50)
     user_input = models.CharField(max_length=255, blank=True, null=True)

@@ -22,7 +22,7 @@ def _ws_broadcast(group, payload):
 @receiver(post_save, sender=Notification)
 def ws_push_notification(sender, instance, created, **kwargs):
     """Temps réel : pousse chaque notification à son destinataire (qui a fait quoi)."""
-    if not created:
+    if kwargs.get('raw') or not created:
         return
     _ws_broadcast(f"notifications_{instance.user_id}", {
         'event': 'notification',
@@ -37,7 +37,7 @@ def ws_push_notification(sender, instance, created, **kwargs):
 @receiver(post_save, sender=DiscussionMessage)
 def ws_push_discussion(sender, instance, created, **kwargs):
     """Temps réel : pousse chaque message de discussion aux membres de l'incident."""
-    if not created:
+    if kwargs.get('raw') or not created:
         return
     _ws_broadcast(f"discussion_{instance.incident_id}", {
         'event': 'discussion_message',
@@ -53,6 +53,8 @@ def ws_push_discussion(sender, instance, created, **kwargs):
 @receiver(post_save, sender=IncidentTask)
 def ws_push_task(sender, instance, created, **kwargs):
     """Temps réel : pousse les créations/màj de tâches aux membres de l'incident."""
+    if kwargs.get('raw'):
+        return
     _ws_broadcast(f"tasks_{instance.incident_id}", {
         'event': 'task_created' if created else 'task_updated',
         'id': instance.id,
@@ -65,6 +67,8 @@ def ws_push_task(sender, instance, created, **kwargs):
 
 @receiver(post_save, sender=Collaboration)
 def notify_organisation_on_collaboration(sender, instance, created, **kwargs):
+    if kwargs.get('raw'):
+        return  # chargement de fixtures (loaddata) : ne pas déclencher la logique métier
     if created:
         incident = instance.incident
         user = incident.taken_by
