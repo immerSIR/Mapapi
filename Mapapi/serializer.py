@@ -539,7 +539,7 @@ class CollaborationSerializer(CollaborationPartiesMixin, ModelSerializer):
     organisation_name = serializers.CharField(
         source='user.organisation_member.name', read_only=True, default=None
     )
-    organisation_id = serializers.IntegerField(
+    organisation_id = serializers.UUIDField(
         source='user.organisation_member_id', read_only=True, default=None
     )
     user_full_name = serializers.SerializerMethodField()
@@ -551,11 +551,13 @@ class CollaborationSerializer(CollaborationPartiesMixin, ModelSerializer):
     class Meta:
         model = Collaboration
         fields = '__all__'
-        # 'status' et 'role' ne sont PAS settables librement par le demandeur :
+        # 'status', 'user' et 'role'(leader) ne sont PAS settables librement par le demandeur :
+        # - user = l'émetteur, TOUJOURS forcé à request.user dans la vue (le client
+        #   n'envoie rien ; évite le 400 "Invalid pk" quand le FE postait un mauvais id)
         # - status est géré par le leader via les endpoints accept/decline
         # - role = 'leader' est auto-attribué quand une organisation prend l'incident ;
         #   une demande manuelle ne peut proposer que contributor/observer
-        read_only_fields = ('status',)
+        read_only_fields = ('status', 'user')
 
     def get_user_full_name(self, obj) -> str | None:
         if obj.user:
