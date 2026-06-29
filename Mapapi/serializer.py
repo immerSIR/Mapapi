@@ -588,6 +588,9 @@ class CollaborationSerializer(CollaborationPartiesMixin, ModelSerializer):
     user_full_name = serializers.SerializerMethodField()
     user_email = serializers.EmailField(source='user.email', read_only=True)
     incident_title = serializers.CharField(source='incident.title', read_only=True)
+    # Raccourcis photo/miniature (en plus de incident_details) pour les cartes.
+    incident_photo = serializers.ImageField(source='incident.photo', read_only=True)
+    incident_thumbnail = serializers.ImageField(source='incident.thumbnail', read_only=True)
     incident_details = IncidentSerializer(source='incident', read_only=True)
     prediction_details = PredictionSerializer(source='incident.prediction', read_only=True)
 
@@ -643,6 +646,9 @@ class CollaborationEnrichedSerializer(CollaborationPartiesMixin, ModelSerializer
     incident_zone = serializers.CharField(source='incident.zone', read_only=True)
     incident_etat = serializers.CharField(source='incident.etat', read_only=True)
     incident_progress = serializers.IntegerField(source='incident.progress', read_only=True)
+    # Photo (+ miniature) de l'incident pour les cartes « Mes collaborations ».
+    incident_photo = serializers.ImageField(source='incident.photo', read_only=True)
+    incident_thumbnail = serializers.ImageField(source='incident.thumbnail', read_only=True)
     start_date = serializers.DateTimeField(source='created_at', read_only=True)
     participants_count = serializers.SerializerMethodField()
 
@@ -653,6 +659,7 @@ class CollaborationEnrichedSerializer(CollaborationPartiesMixin, ModelSerializer
             'organisation_name', 'user_role', 'sender', 'receiver',
             'incident_title', 'incident_description', 'incident_zone',
             'incident_etat', 'incident_progress',
+            'incident_photo', 'incident_thumbnail',
             'start_date', 'end_date',
             'participants_count', 'motivation',
         ]
