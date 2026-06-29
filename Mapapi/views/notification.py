@@ -4,19 +4,29 @@ from rest_framework.permissions import IsAuthenticated
 
 from drf_spectacular.utils import extend_schema, extend_schema_view
 
+from drf_spectacular.utils import OpenApiParameter
+from drf_spectacular.types import OpenApiTypes
+
 from ..serializer import *
-from .common import CustomPageNumberPagination
+from .common import CustomPageNumberPagination, NotificationPagination
 
 
 @extend_schema_view(
     list=extend_schema(
         tags=['Notifications'],
         operation_id='notifications_list',
-        summary='Mes notifications en attente',
+        summary='Mes notifications',
         description=(
-            "Notifications de l'utilisateur connecté liées à une collaboration "
-            "en attente (`colaboration.status='pending'`). Authentification requise."
+            "Toutes les notifications de l'utilisateur connecté, **plus récentes "
+            "d'abord**, paginées (20/page, `?page=&page_size=`). Chaque notification "
+            "porte un champ `link` (cible de redirection au clic). Filtre `?read=true|false` "
+            "(ex. `?read=false` pour les non lues → `count` = nombre de non lues). "
+            "Authentification requise."
         ),
+        parameters=[
+            OpenApiParameter('read', OpenApiTypes.BOOL, OpenApiParameter.QUERY,
+                             description="Filtre lues/non lues (true|false)."),
+        ],
         responses={200: NotificationSerializer(many=True)},
     )
 )
@@ -24,10 +34,14 @@ class NotificationViewSet(viewsets.ModelViewSet):
     queryset = Notification.objects.all()
     serializer_class = NotificationSerializer
     permission_classes = [IsAuthenticated]
+    pagination_class = NotificationPagination
 
     def get_queryset(self):
-        user = self.request.user
-        return Notification.objects.filter(user=user, colaboration__status='pending')
+        qs = Notification.objects.filter(user=self.request.user).order_by('-created_at')
+        read = self.request.query_params.get('read')
+        if read is not None:
+            qs = qs.filter(read=(str(read).lower() in ('1', 'true', 'yes')))
+        return qs
 
 
 @extend_schema_view(

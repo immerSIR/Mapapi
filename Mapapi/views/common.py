@@ -29,6 +29,12 @@ class IncidentPagination(CustomPageNumberPagination):
     max_page_size = 100
 
 
+class NotificationPagination(CustomPageNumberPagination):
+    # Défaut adapté au panneau de notifications. Surchargeable via ?page_size=.
+    page_size = 20
+    max_page_size = 100
+
+
 def get_random(length=7):
     """Generate a random alphanumeric code (default length=7, used for password reset).
 

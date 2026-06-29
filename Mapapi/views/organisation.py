@@ -978,6 +978,9 @@ class StaffAccountCreateView(APIView):
 
         response_data = OrganisationMemberSerializer(member).data
         response_data.update({
+            # Mot de passe temporaire renvoyé une seule fois (comme `initial_pin` pour les
+            # agents de terrain) : l'admin peut le communiquer même si l'email n'arrive pas.
+            'temp_password': temp_password,
             'email_sent': email_sent,
             'must_change_password': True,
         })
