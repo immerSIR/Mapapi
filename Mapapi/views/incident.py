@@ -3,6 +3,7 @@ import subprocess
 from datetime import timedelta
 
 from django.conf import settings
+from django.core.exceptions import ValidationError
 from django.core.mail import EmailMultiAlternatives
 from django.db.models import Q, Prefetch, Count
 from django.template.loader import render_to_string
@@ -2780,14 +2781,30 @@ class RetryIncidentPredictionView(APIView):
         tags=['Prédiction & IA'],
         operation_id='incident_chat_history',
         summary="Historique du chat IA d'un incident",
-        description="Récupère l'historique des messages (user/assistant) du chat IA de "
-                    "l'incident. Authentification requise.",
+        description=(
+            "Récupère l'historique des messages (user/assistant) du chat IA de "
+            "l'incident, propre à l'utilisateur connecté. Authentification requise.\n\n"
+            "Pagination curseur (chargement progressif) : sans `limit`, renvoie tout "
+            "l'historique en ordre chronologique. Avec `limit`, renvoie les N messages "
+            "les plus récents (ordre croissant) + `has_more` + `next_before`. Pour "
+            "charger les messages plus anciens (scroll vers le haut), rappeler avec "
+            "`?before=<id du plus ancien message déjà chargé>`."
+        ),
         parameters=[
             OpenApiParameter('incident_id', OpenApiTypes.UUID, OpenApiParameter.PATH,
                              description="Identifiant de l'incident."),
+            OpenApiParameter('limit', OpenApiTypes.INT, OpenApiParameter.QUERY,
+                             description="Nombre de messages les plus récents à renvoyer (1–100). "
+                                         "Absent = tout l'historique."),
+            OpenApiParameter('before', OpenApiTypes.UUID, OpenApiParameter.QUERY,
+                             description="Curseur : renvoie les messages ANTÉRIEURS à ce message "
+                                         "(son id). À utiliser avec `limit` pour le scroll vers le haut."),
         ],
         responses={
-            200: OpenApiResponse(description="{history:[{role,content,created_at,user_id}]}."),
+            200: OpenApiResponse(
+                description="{history:[{id,role,content,created_at,user_id}], has_more, next_before} "
+                            "(has_more/next_before présents uniquement quand `limit` est fourni)."),
+            400: OpenApiResponse(description="limit invalide, ou 'before' invalide/introuvable."),
             404: OpenApiResponse(description="Incident non trouvé."),
         },
     ),
@@ -2818,6 +2835,16 @@ class IncidentChatView(APIView):
     """GET/POST /MapApi/incidents/<incident_id>/chat/."""
     permission_classes = [IsAuthenticated]
 
+    @staticmethod
+    def _serialize_message(m):
+        return {
+            "id": m.id,
+            "role": m.role,
+            "content": m.content,
+            "created_at": m.created_at,
+            "user_id": m.user_id,
+        }
+
     def get(self, request, incident_id):
         try:
             incident = Incident.objects.get(pk=incident_id)
@@ -2826,22 +2853,62 @@ class IncidentChatView(APIView):
 
         # Historique privé : limité à l'utilisateur connecté (chaque (user, incident)
         # a sa propre conversation avec l'assistant IA).
-        history = (
-            incident.chat_messages
-            .filter(user=request.user, role__in=[CHAT_ROLE_USER, CHAT_ROLE_ASSISTANT])
-            .order_by('created_at', 'id')
+        base = incident.chat_messages.filter(
+            user=request.user, role__in=[CHAT_ROLE_USER, CHAT_ROLE_ASSISTANT]
         )
+
+        # --- Pagination curseur (chargement progressif du chat) ---
+        # Sans `limit` : historique complet, dans l'ordre chronologique (rétro-compatible).
+        # Avec `limit` : on renvoie les N messages les PLUS RÉCENTS (ordre chronologique
+        # croissant pour l'affichage), + `has_more` et `next_before`. Pour charger les
+        # messages plus anciens (scroll vers le haut), rappeler avec
+        # `?before=<id du plus ancien message déjà chargé>`.
+        limit_param = request.query_params.get('limit')
+        if limit_param is None:
+            history = base.order_by('created_at', 'id')
+            return Response(
+                {"history": [self._serialize_message(m) for m in history]},
+                status=status.HTTP_200_OK,
+            )
+
+        try:
+            limit = int(limit_param)
+        except (TypeError, ValueError):
+            return Response({"detail": "limit doit être un entier."}, status=status.HTTP_400_BAD_REQUEST)
+        limit = max(1, min(limit, 100))
+
+        # On pagine du plus récent vers le plus ancien (keyset sur created_at + id).
+        qs = base.order_by('-created_at', '-id')
+
+        before = request.query_params.get('before')
+        if before:
+            try:
+                cursor = base.filter(pk=before).values('created_at', 'id').first()
+            except (ValueError, ValidationError):
+                cursor = None
+            if not cursor:
+                return Response(
+                    {"detail": "Paramètre 'before' invalide ou introuvable."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            qs = qs.filter(
+                Q(created_at__lt=cursor['created_at'])
+                | Q(created_at=cursor['created_at'], id__lt=cursor['id'])
+            )
+
+        # limit+1 pour savoir s'il reste des messages plus anciens.
+        rows = list(qs[:limit + 1])
+        has_more = len(rows) > limit
+        rows = rows[:limit]
+        # rows est en ordre décroissant (récent -> ancien) : le plus ancien de la
+        # page est le curseur pour la page suivante (plus ancienne).
+        next_before = str(rows[-1].id) if (rows and has_more) else None
+        rows.reverse()  # ordre chronologique croissant pour l'affichage
         return Response(
             {
-                "history": [
-                    {
-                        "role": m.role,
-                        "content": m.content,
-                        "created_at": m.created_at,
-                        "user_id": m.user_id,
-                    }
-                    for m in history
-                ]
+                "history": [self._serialize_message(m) for m in rows],
+                "has_more": has_more,
+                "next_before": next_before,
             },
             status=status.HTTP_200_OK,
         )
