@@ -1036,12 +1036,7 @@ CHAT_ROLES = (
 
 
 class ChatHistory(UUIDModel):
-    # --- Legacy fields (kept nullable for backward compatibility) ---
-    session_id = models.CharField(max_length=255, db_index=True, blank=True, null=True)
-    question = models.TextField(db_index=True, blank=True, null=True)
-    answer = models.TextField(db_index=True, blank=True, null=True)
-
-    # --- New per-message fields tied to an Incident ---
+    # Un message du chat IA d'un incident, propre à un utilisateur (incident + user).
     incident = models.ForeignKey(
         'Incident', on_delete=models.CASCADE,
         related_name='chat_messages', null=True, blank=True,
