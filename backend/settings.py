@@ -72,10 +72,15 @@ PASSWORD_HASHERS = [
 REST_FRAMEWORK = {
     # YOUR SETTINGS
     'DEFAULT_AUTHENTICATION_CLASSES': (
-        'rest_framework_simplejwt.authentication.JWTAuthentication',
+        # JWT par cookie httpOnly (avec repli Bearer pour mobile/transition).
+        'Mapapi.authentication.CookieJWTAuthentication',
     ),
     'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
 }
+
+# --- Cookies d'authentification httpOnly (cf. Mapapi/authentication.py) ---
+AUTH_COOKIE_ACCESS = 'access_token'
+AUTH_COOKIE_REFRESH = 'refresh_token'
 
 SIMPLE_JWT = {
     "ACCESS_TOKEN_LIFETIME": timedelta(days=90),
@@ -95,6 +100,9 @@ SIMPLE_JWT = {
     "SLIDING_TOKEN_OBTAIN_SERIALIZER": "rest_framework_simplejwt.serializers.TokenObtainSlidingSerializer",
     "SLIDING_TOKEN_REFRESH_SERIALIZER": "rest_framework_simplejwt.serializers.TokenRefreshSlidingSerializer",
 }
+# Durées de vie des cookies = durées de vie des tokens.
+AUTH_COOKIE_ACCESS_MAX_AGE = int(SIMPLE_JWT["ACCESS_TOKEN_LIFETIME"].total_seconds())
+AUTH_COOKIE_REFRESH_MAX_AGE = int(SIMPLE_JWT["REFRESH_TOKEN_LIFETIME"].total_seconds())
 SPECTACULAR_SETTINGS = {
     'TITLE': 'Map Action API',
     'DESCRIPTION': 'This comprehensive document serves as the official guide to understanding and utilizing the Map Action API.'

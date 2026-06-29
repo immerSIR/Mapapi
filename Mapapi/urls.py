@@ -52,6 +52,9 @@ from rest_framework_simplejwt.views import (
 )
 from drf_spectacular.views import SpectacularAPIView, SpectacularRedocView, SpectacularSwaggerView
 from .views import PasswordResetView
+from .views.auth_cookie import (
+    CookieTokenObtainPairView, CookieTokenRefreshView, CookieLogoutView,
+)
 
 urlpatterns = [
     path('tenant-config/', TenantConfigView.as_view(), name='tenant_config'),
@@ -71,10 +74,11 @@ urlpatterns = [
     path('schema/redoc/', SpectacularRedocView.as_view(url_name='schema'), name='redoc'),
     path('accounts/', include('allauth.urls')),
     # for token
-    path('login/', TokenObtainPairView.as_view(), name='login'),
-    path('api/token/', TokenObtainPairView.as_view(), name='token_obtain_pair'),
+    path('login/', CookieTokenObtainPairView.as_view(), name='login'),
+    path('api/token/', CookieTokenObtainPairView.as_view(), name='token_obtain_pair'),
     path('verify-token/', TokenVerifyView.as_view(), name='token_verify'),
-    path('token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
+    path('token/refresh/', CookieTokenRefreshView.as_view(), name='token_refresh'),
+    path('logout/', CookieLogoutView.as_view(), name='logout'),
     path('get_csrf_token/', get_csrf_token, name="get_csrf_token"),
     path("gettoken_bymail/", GetTokenByMailView.as_view(), name="get_token_by_mail"),
     # path('login/', login),
