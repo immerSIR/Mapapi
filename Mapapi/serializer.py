@@ -40,6 +40,13 @@ class OrganisationMemberSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ('id', 'email', 'date_joined', 'agent_code')
 
+    @extend_schema_field(serializers.ChoiceField(
+        choices=['super_admin', 'org_admin', 'bureau_agent', 'field_agent'],
+        allow_null=True,
+        help_text="Rôle canonique du dashboard : super_admin si is_superuser, "
+                  "sinon l'org_role (org_admin/bureau_agent/field_agent), sinon null. "
+                  "Distinct de user_type (catégorie de compte).",
+    ))
     def get_web_role(self, obj) -> str | None:
         from .roles import get_web_role
         return get_web_role(obj)
@@ -93,6 +100,13 @@ class UserSerializer(ModelSerializer):
         # n'est jamais renvoyé.
         extra_kwargs = PASSWORD_WRITE_ONLY
 
+    @extend_schema_field(serializers.ChoiceField(
+        choices=['super_admin', 'org_admin', 'bureau_agent', 'field_agent'],
+        allow_null=True,
+        help_text="Rôle canonique du dashboard : super_admin si is_superuser, "
+                  "sinon l'org_role (org_admin/bureau_agent/field_agent), sinon null. "
+                  "Distinct de user_type (catégorie de compte).",
+    ))
     def get_web_role(self, obj) -> str | None:
         from .roles import get_web_role
         return get_web_role(obj)
