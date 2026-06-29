@@ -10,6 +10,30 @@ from django.contrib.auth.hashers import make_password
 from django.utils import timezone
 from drf_spectacular.utils import extend_schema_field
 from drf_spectacular.types import OpenApiTypes
+import base64
+import uuid as _uuid
+from django.core.files.base import ContentFile
+
+
+class AvatarField(serializers.ImageField):
+    """Champ avatar tolérant : accepte un fichier multipart OU une data-URL base64
+    (le front lit le fichier en base64 via FileReader). Toute autre valeur (l'URL
+    existante renvoyée par le front quand l'avatar n'a pas changé, chaîne, vide) est
+    ignorée → l'avatar courant est conservé, plus de 400 « not a file »."""
+
+    def to_internal_value(self, data):
+        if hasattr(data, 'read'):  # fichier multipart classique
+            return super().to_internal_value(data)
+        if isinstance(data, str) and data.startswith('data:image'):
+            try:
+                header, b64 = data.split(';base64,', 1)
+                ext = (header.split('/')[-1] or 'png')[:5]
+                decoded = base64.b64decode(b64)
+                f = ContentFile(decoded, name=f"avatar_{_uuid.uuid4().hex[:10]}.{ext}")
+                return super().to_internal_value(f)
+            except Exception:
+                self.fail('invalid_image')
+        raise serializers.SkipField()  # rien de nouveau à enregistrer
 
 
 class OrganisationSerializer(serializers.ModelSerializer):
@@ -90,6 +114,7 @@ class UserRegisterSerializer(serializers.ModelSerializer):
 
  
 class UserSerializer(ModelSerializer):
+    avatar = AvatarField(required=False)
     incident_preferences = serializers.ListField(
         child=serializers.CharField(),
         write_only=True,
@@ -153,6 +178,8 @@ class UserEluSerializer(serializers.ModelSerializer):
 
 
 class UserPutSerializer(serializers.ModelSerializer):
+    avatar = AvatarField(required=False)
+
     class Meta:
         model = User
         exclude = SENSITIVE_USER_FIELDS
