@@ -382,7 +382,9 @@ class IncidentAPIListView(generics.CreateAPIView):
             items = items.filter(severity=severity)
         paginator = IncidentPagination()
         result_page = paginator.paginate_queryset(items, request)
-        serializer = IncidentGetSerializer(result_page, many=True)
+        # context={'request'} : nécessaire pour le champ `my_collaboration`
+        # (demande de collaboration du viewer sur chaque incident).
+        serializer = IncidentGetSerializer(result_page, many=True, context={'request': request})
         return paginator.get_paginated_response(serializer.data)
 
     def post(self, request, format=None):

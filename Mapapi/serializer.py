@@ -222,11 +222,54 @@ class IncidentActingOrgsMixin(serializers.Serializer):
     taken_by_organisation = serializers.SerializerMethodField(read_only=True)
     taken_by_name = serializers.SerializerMethodField(read_only=True)
     acting_organisations = serializers.SerializerMethodField(read_only=True)
+    my_collaboration = serializers.SerializerMethodField(read_only=True)
 
     @extend_schema_field(OpenApiTypes.OBJECT)
     def get_taken_by_organisation(self, obj):
         from .services.incident_orgs import taken_by_organisation
         return taken_by_organisation(obj)
+
+    @extend_schema_field(OpenApiTypes.OBJECT)
+    def get_my_collaboration(self, obj):
+        """Pour le viewer connecté : SA demande de collaboration sur cet incident
+        (ou celle de SON organisation), QUEL QUE SOIT le statut — notamment
+        ``pending``. Permet, dans la liste, de voir « j'ai demandé à collaborer,
+        en attente » sur un incident déjà pris en charge par une autre org.
+        Renvoie ``None`` si aucune demande (ou pas de viewer authentifié).
+        Calculé sur ``collaboration_set`` préchargé → pas de N+1 en liste."""
+        request = self.context.get('request')
+        user = getattr(request, 'user', None)
+        if not user or not getattr(user, 'is_authenticated', False):
+            return None
+        org_id = getattr(user, 'organisation_member_id', None)
+        mine = []
+        for c in obj.collaboration_set.all():
+            cu = getattr(c, 'user', None)
+            if not cu:
+                continue
+            if org_id is not None:
+                if getattr(cu, 'organisation_member_id', None) == org_id:
+                    mine.append(c)
+            elif cu.id == user.id:
+                mine.append(c)
+        if not mine:
+            return None
+        # On garde la plus pertinente : accepted > pending > declined, puis récente.
+        rank = {'accepted': 0, 'pending': 1, 'declined': 2}
+        mine.sort(key=lambda c: (
+            rank.get(c.status, 9),
+            -(c.created_at.timestamp() if getattr(c, 'created_at', None) else 0),
+        ))
+        best = mine[0]
+        org = getattr(getattr(best, 'user', None), 'organisation_member', None)
+        return {
+            'id': best.id,
+            'status': best.status,
+            'role': best.role,
+            'created_at': best.created_at.isoformat() if getattr(best, 'created_at', None) else None,
+            'organisation_id': org.id if org else None,
+            'organisation_name': org.name if org else None,
+        }
 
     def get_taken_by_name(self, obj) -> str | None:
         tb = getattr(obj, 'taken_by', None)
