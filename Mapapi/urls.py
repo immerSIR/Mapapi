@@ -184,6 +184,9 @@ urlpatterns = [
     path('Incidentprediction/<uuid:id>/', PredictionViewByIncidentID.as_view(), name="prediction"),
     # Notification
     path('notifications/', NotificationViewSet.as_view({'get': 'list'}), name="notification"),
+    path('activity-feed/', ActivityFeedView.as_view(), name="activity-feed"),
+    path('agents/stats/', AgentStatsView.as_view(), name="agents-stats"),
+    path('agents/', AgentListView.as_view(), name="agents-list"),
     path('hadleIncident/<uuid:incident_id>', HandleIncidentView.as_view(), name="handle"),
     path('user_action/', UserActionView.as_view({'get': 'list'}), name="user_action"),
     path('incidentDetail/<uuid:incident_id>', IncidentUserView.as_view(), name="incident_detail"),

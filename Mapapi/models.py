@@ -1130,6 +1130,12 @@ class UserAction(UUIDModel):
     user = models.ForeignKey(User, on_delete=models.CASCADE, blank=False, null=False)
     action = models.CharField(max_length=255)
     timeStamp = models.DateField(auto_now_add=True)
+    # Horodatage précis (le `timeStamp` historique est une date seule) — utilisé par
+    # le flux d'activité pour afficher "il y a X min". Nullable pour les lignes existantes.
+    created_at = models.DateTimeField(auto_now_add=True, null=True, blank=True)
+
+    class Meta:
+        ordering = ('-created_at', '-timeStamp')
 
     def __str__(self):
         return self.action

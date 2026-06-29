@@ -987,3 +987,77 @@ class StaffAccountCreateView(APIView):
         if email_error:
             response_data['email_error'] = email_error
         return Response(response_data, status=status.HTTP_201_CREATED)
+
+
+_AGENT_ROLES = [ORG_ROLE_ADMIN, ORG_ROLE_BUREAU, ORG_ROLE_FIELD]
+
+
+@extend_schema(
+    tags=['Organisations & Membres'],
+    operation_id='agents_list',
+    summary="Lister les agents (global)",
+    description="Tous les agents (membres d'organisation : org_admin, bureau_agent, "
+                "field_agent), **plus récents d'abord**, paginés. Filtres : `?search=` "
+                "(nom/email/organisation), `?role=org_admin|bureau_agent|field_agent`, "
+                "`?status=active|inactive`. Authentification requise.",
+    parameters=[
+        OpenApiParameter('search', OpenApiTypes.STR, OpenApiParameter.QUERY, description="Nom, email ou organisation."),
+        OpenApiParameter('role', OpenApiTypes.STR, OpenApiParameter.QUERY, description="org_admin|bureau_agent|field_agent."),
+        OpenApiParameter('status', OpenApiTypes.STR, OpenApiParameter.QUERY, description="active|inactive."),
+    ],
+    responses={200: OrganisationMemberSerializer(many=True)},
+)
+class AgentListView(generics.ListAPIView):
+    """GET /agents/ — liste globale des agents (membres d'organisation avec rôle)."""
+    permission_classes = [IsAuthenticated]
+    serializer_class = OrganisationMemberSerializer
+    pagination_class = CustomPageNumberPagination
+
+    def get_queryset(self):
+        qs = (User.objects
+              .filter(org_role__in=_AGENT_ROLES)
+              .select_related('organisation_member')
+              .order_by('-date_joined'))
+        p = self.request.query_params
+        search = (p.get('search') or '').strip()
+        if search:
+            qs = qs.filter(
+                Q(first_name__icontains=search) | Q(last_name__icontains=search)
+                | Q(email__icontains=search) | Q(organisation_member__name__icontains=search)
+            )
+        role = p.get('role')
+        if role:
+            qs = qs.filter(org_role=role)
+        statut = p.get('status')
+        if statut:
+            qs = qs.filter(is_active=(str(statut).lower() in ('active', 'actif', 'true', '1')))
+        return qs
+
+
+@extend_schema(
+    tags=['Organisations & Membres'],
+    operation_id='agents_stats',
+    summary="Stats du dashboard agents",
+    description="Cartes du dashboard agents : total, actifs, admins, agents de terrain. "
+                "Authentification requise.",
+    responses={200: inline_serializer(name='AgentStats', fields={
+        'total': serializers.IntegerField(),
+        'active': serializers.IntegerField(),
+        'admins': serializers.IntegerField(),
+        'bureau_agents': serializers.IntegerField(),
+        'field_agents': serializers.IntegerField(),
+    })},
+)
+class AgentStatsView(APIView):
+    """GET /agents/stats/ — compteurs pour les cartes du dashboard agents."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        agents = User.objects.filter(org_role__in=_AGENT_ROLES)
+        return Response({
+            'total': agents.count(),
+            'active': agents.filter(is_active=True).count(),
+            'admins': agents.filter(org_role=ORG_ROLE_ADMIN).count(),
+            'bureau_agents': agents.filter(org_role=ORG_ROLE_BUREAU).count(),
+            'field_agents': agents.filter(org_role=ORG_ROLE_FIELD).count(),
+        })

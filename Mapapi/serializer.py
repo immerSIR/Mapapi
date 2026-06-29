@@ -653,6 +653,26 @@ class UserActionSerializer(serializers.ModelSerializer):
         fields = '__all__'
 
 
+class ActivityFeedSerializer(serializers.ModelSerializer):
+    """Élément du flux d'activité : action + acteur + organisation + horodatage précis."""
+    user_name = serializers.SerializerMethodField(read_only=True)
+    organisation_name = serializers.SerializerMethodField(read_only=True)
+
+    class Meta:
+        model = UserAction
+        fields = ['id', 'action', 'timeStamp', 'created_at', 'user', 'user_name', 'organisation_name']
+
+    def get_user_name(self, obj) -> str | None:
+        u = obj.user
+        if not u:
+            return None
+        return (f"{u.first_name or ''} {u.last_name or ''}".strip()) or u.email
+
+    def get_organisation_name(self, obj) -> str | None:
+        u = obj.user
+        return getattr(getattr(u, 'organisation_member', None), 'name', None) if u else None
+
+
 class IncidentAssignmentSerializer(serializers.ModelSerializer):
     agent_name = serializers.CharField(source='agent.get_full_name', read_only=True)
     agent_email = serializers.EmailField(source='agent.email', read_only=True)

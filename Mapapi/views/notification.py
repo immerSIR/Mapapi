@@ -1,5 +1,5 @@
 """Notification & user-action endpoints."""
-from rest_framework import viewsets
+from rest_framework import viewsets, generics
 from rest_framework.permissions import IsAuthenticated
 
 from drf_spectacular.utils import extend_schema, extend_schema_view
@@ -63,3 +63,27 @@ class UserActionView(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         serializer.save(user=self.request.user)
+
+
+@extend_schema(
+    tags=['Notifications'],
+    operation_id='activity_feed',
+    summary="Flux d'activité (autres organisations)",
+    description="Activité récente de la plateforme **en dehors de l'organisation de "
+                "l'utilisateur connecté** (prises en charge / résolutions d'incidents, "
+                "etc.), plus récente d'abord, paginée (20/page). Chaque élément expose "
+                "`action`, `user_name`, `organisation_name`, `created_at`. Auth requise.",
+    responses={200: ActivityFeedSerializer(many=True)},
+)
+class ActivityFeedView(generics.ListAPIView):
+    """GET /activity-feed/ — activité de la plateforme hors organisation connectée."""
+    permission_classes = [IsAuthenticated]
+    serializer_class = ActivityFeedSerializer
+    pagination_class = NotificationPagination
+
+    def get_queryset(self):
+        qs = UserAction.objects.select_related('user', 'user__organisation_member')
+        org_id = getattr(self.request.user, 'organisation_member_id', None)
+        if org_id:
+            qs = qs.exclude(user__organisation_member_id=org_id)
+        return qs  # tri par défaut depuis Meta (-created_at, -timeStamp)
