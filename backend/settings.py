@@ -129,11 +129,86 @@ SESSION_COOKIE_SAMESITE = COOKIE_SAMESITE
 SESSION_COOKIE_SECURE = COOKIE_SECURE
 SPECTACULAR_SETTINGS = {
     'TITLE': 'Map Action API',
-    'DESCRIPTION': 'This comprehensive document serves as the official guide to understanding and utilizing the Map Action API.'
-     'Within these pages, developers will find detailed information, including endpoint descriptions, parameter specifications, response formats, authentication requirements, and usage examples.',
+    'DESCRIPTION': (
+        "API REST de la plateforme **Map Action** (gestion d'incidents "
+        "environnementaux/humanitaires au Mali) qui sert le dashboard React et "
+        "les clients mobile/IVR.\n\n"
+        "## Authentification\n"
+        "JWT **Bearer**. Connectez-vous via `POST /MapApi/login/` "
+        "(`{email, password}` → `{access, refresh}`), cliquez sur **Authorize** "
+        "en haut à droite et collez le token `access`. La connexion se fait par "
+        "**email** (pas username). Token d'accès : 90 jours.\n\n"
+        "## À savoir\n"
+        "- **Préfixe** : toutes les routes sont sous `/MapApi/`.\n"
+        "- **Slash final** : les routes sont insensibles au slash final "
+        "(`/incident/1` ≡ `/incident/1/`).\n"
+        "- **Ids** : ce sont des **UUID** (chaînes), pas des entiers.\n"
+        "- **Beaucoup d'endpoints de lecture/référentiel sont publics** "
+        "(pas d'auth) — voir le verrou sur chaque opération.\n"
+        "- **Pagination** : les listes paginées renvoient "
+        "`{count, next, previous, results}` (`?page=&page_size=`, défaut 100, "
+        "max 1000) ; certaines listes renvoient un tableau brut.\n"
+        "- **Uploads** : les endpoints avec fichiers "
+        "(`photo, video, audio, attachment, proof_image, proof_video, logo`) "
+        "exigent `multipart/form-data`.\n"
+        "- **Messages** d'erreur/notification : en **français**."
+    ),
     'VERSION': '1.0.0',
+    'CONTACT': {'name': 'Map Action', 'url': 'https://github.com/223MapAction'},
+    'LICENSE': {'name': 'Proprietary'},
+    'SERVERS': [
+        {'url': 'https://backend-production-0726b.up.railway.app', 'description': 'Production (Railway)'},
+        {'url': 'http://localhost:8000', 'description': 'Dev local (daphne direct)'},
+        {'url': 'http://localhost', 'description': 'Dev local (via nginx)'},
+    ],
+    'TAGS': [
+        {'name': 'Authentification', 'description': 'Login, refresh, logout, inscription, mot de passe, vérification.'},
+        {'name': 'Utilisateurs & Profil', 'description': 'Profil courant, gestion des utilisateurs, changement de mot de passe.'},
+        {'name': 'Organisations & Membres', 'description': "Organisations, membres, création d'agents/staff."},
+        {'name': 'Incidents', 'description': "CRUD, cycle de vie, listes filtrées (carte, dashboard), corbeille, stats."},
+        {'name': 'Prise en charge & Collaboration', 'description': "Prise en charge, collaborations (émetteur/récepteur), accept/refus."},
+        {'name': 'Tâches', 'description': "Tâches d'un incident : création, complétion (preuves), échec, confirmation."},
+        {'name': 'Suggestions de partenaires', 'description': 'Suggestions de partenaires/organisations sur un incident.'},
+        {'name': 'Rapports', 'description': "Rapports liés aux incidents."},
+        {'name': 'Notifications', 'description': 'Notifications utilisateur (temps réel via WebSocket).'},
+        {'name': 'Messages & Communauté', 'description': 'Messages, réponses, communautés.'},
+        {'name': 'Zones', 'description': 'Zones géographiques (régions/cercles/communes).'},
+        {'name': 'Catégories & Indicateurs', 'description': "Catégories d'incident et indicateurs."},
+        {'name': 'Prédiction & IA', 'description': "Prédictions du modèle ML et assistant IA (chat) par incident."},
+        {'name': 'Événements & Participation', 'description': 'Événements et participations citoyennes.'},
+        {'name': 'Contacts & Élus', 'description': 'Contacts et élus locaux.'},
+        {'name': 'Médias', 'description': "Images de fond / médias."},
+        {'name': 'IVR (Téléphonie)', 'description': 'Flux vocal Twilio (signalement par téléphone).'},
+        {'name': 'Référentiel & Statistiques', 'description': 'Endpoints de référence et statistiques (souvent publics).'},
+    ],
+    # Noms d'enum explicites — plusieurs jeux de choix s'appellent "role"/"status"
+    # et drf-spectacular génère sinon des noms illisibles (Role8a8Enum…).
+    'ENUM_NAME_OVERRIDES': {
+        'OrgRoleEnum': 'Mapapi.models.ORG_ROLES',
+        'CollaborationRoleEnum': 'Mapapi.models.COLLAB_ROLES',
+        'ChatRoleEnum': 'Mapapi.models.CHAT_ROLES',
+        'SuggestionRoleEnum': 'Mapapi.models.SUGGESTION_ROLES',
+        'AssignmentStatusEnum': 'Mapapi.models.ASSIGNMENT_STATUSES',
+        'OrgAssignmentStatusEnum': 'Mapapi.models.ORG_ASSIGNMENT_STATUSES',
+        'SuggestionStatusEnum': 'Mapapi.models.SUGGESTION_STATUSES',
+        'PartnerStatusEnum': 'Mapapi.models.PARTNER_STATUSES',
+        'UserTypeEnum': 'Mapapi.models.USER_TYPES',
+        'IncidentEtatEnum': 'Mapapi.models.ETAT_INCIDENT',
+        'RapportEtatEnum': 'Mapapi.models.ETAT_RAPPORT',
+        'TaskStateEnum': 'Mapapi.models.TASK_STATES',
+        'SeverityEnum': 'Mapapi.models.SEVERITY_CHOICES',
+    },
     'SERVE_INCLUDE_SCHEMA': False,
-    'SWAGGER_UI_DIST': 'SIDECAR',  # shorthand to use the sidecar instead
+    'COMPONENT_SPLIT_REQUEST': True,   # schémas requête/réponse distincts (lecture vs écriture)
+    'SORT_OPERATIONS': False,          # garde l'ordre par tag/déclaration
+    'SCHEMA_PATH_PREFIX': r'/MapApi',
+    'SWAGGER_UI_SETTINGS': {
+        'persistAuthorization': True,  # garde le token entre les rechargements
+        'displayRequestDuration': True,
+        'filter': True,                # barre de recherche par tag/opération
+        'docExpansion': 'none',
+    },
+    'SWAGGER_UI_DIST': 'SIDECAR',
     'SWAGGER_UI_FAVICON_HREF': 'SIDECAR',
     'REDOC_DIST': 'SIDECAR',
 }

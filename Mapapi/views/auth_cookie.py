@@ -17,6 +17,11 @@ from rest_framework.views import APIView
 from rest_framework_simplejwt.exceptions import InvalidToken, TokenError
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
+from drf_spectacular.utils import (
+    extend_schema, OpenApiExample, OpenApiResponse, inline_serializer,
+)
+from rest_framework import serializers
+
 
 def _set_auth_cookies(request, response, access=None, refresh=None):
     """Pose les cookies JWT httpOnly. Secure + SameSite=None en HTTPS (cross-site
@@ -45,6 +50,53 @@ class CookieTokenObtainPairView(TokenObtainPairView):
     # vérif CSRF et bloquerait la reconnexion).
     authentication_classes = []
 
+    @extend_schema(
+        tags=['Authentification'],
+        operation_id='auth_login',
+        summary="Connexion (obtention des tokens JWT)",
+        description=(
+            "Authentifie un utilisateur par `email` + `password` et renvoie les tokens "
+            "JWT `access`/`refresh` dans le corps (utilisés par le mobile via "
+            "`Authorization: Bearer`). Pose aussi ces tokens dans des cookies httpOnly "
+            "(`access_token`, `refresh_token`) et ajoute un `csrftoken` dans le corps "
+            "(le SPA cross-site le renvoie via l'en-tête `X-CSRFToken`). Endpoint public ; "
+            "également monté sur `POST /api/token/` (alias)."
+        ),
+        request=inline_serializer(
+            name='AuthLoginRequest',
+            fields={
+                'email': serializers.EmailField(),
+                'password': serializers.CharField(write_only=True),
+            },
+        ),
+        responses={
+            200: inline_serializer(
+                name='AuthLoginResponse',
+                fields={
+                    'access': serializers.CharField(),
+                    'refresh': serializers.CharField(),
+                    'csrftoken': serializers.CharField(),
+                },
+            ),
+            401: OpenApiResponse(description="Identifiants invalides (`{detail}`)."),
+        },
+        examples=[
+            OpenApiExample(
+                'Connexion',
+                value={'email': 'agent@example.org', 'password': 'motdepasse'},
+                request_only=True,
+            ),
+            OpenApiExample(
+                'Tokens renvoyés',
+                value={
+                    'access': 'eyJhbGciOiJI...',
+                    'refresh': 'eyJhbGciOiJI...',
+                    'csrftoken': 'p0Tk...CSRF',
+                },
+                response_only=True,
+            ),
+        ],
+    )
     def post(self, request, *args, **kwargs):
         response = super().post(request, *args, **kwargs)
         if response.status_code == 200:
@@ -67,6 +119,27 @@ class CookieTokenRefreshView(TokenRefreshView):
     # cookie → pas d'auth par cookie ici (donc pas de blocage CSRF).
     authentication_classes = []
 
+    @extend_schema(
+        tags=['Authentification'],
+        operation_id='auth_token_refresh',
+        summary="Rafraîchir le token d'accès",
+        description=(
+            "Renvoie un nouveau token `access` à partir d'un `refresh` valide. Le refresh "
+            "est lu depuis le corps `{refresh}` ou, à défaut, depuis le cookie httpOnly "
+            "`refresh_token`. Met aussi à jour les cookies d'authentification. Endpoint public."
+        ),
+        request=inline_serializer(
+            name='AuthTokenRefreshRequest',
+            fields={'refresh': serializers.CharField(required=False)},
+        ),
+        responses={
+            200: inline_serializer(
+                name='AuthTokenRefreshResponse',
+                fields={'access': serializers.CharField()},
+            ),
+            401: OpenApiResponse(description="Refresh token invalide ou expiré (`{detail}`)."),
+        },
+    )
     def post(self, request, *args, **kwargs):
         refresh = request.data.get('refresh') or request.COOKIES.get(settings.AUTH_COOKIE_REFRESH)
         serializer = self.get_serializer(data={'refresh': refresh})
@@ -91,6 +164,17 @@ class CookieLogoutView(APIView):
     permission_classes = [AllowAny]
     authentication_classes = []
 
+    @extend_schema(
+        tags=['Authentification'],
+        operation_id='auth_logout',
+        summary="Déconnexion",
+        description=(
+            "Efface les cookies d'authentification httpOnly (`access_token`, `refresh_token`). "
+            "Sans authentification ni CSRF : la déconnexion réussit toujours, même sans token valide."
+        ),
+        request=None,
+        responses={200: OpenApiResponse(description="Déconnecté (`{detail}`).")},
+    )
     def post(self, request):
         response = Response({'detail': 'Déconnecté.'}, status=status.HTTP_200_OK)
         response.delete_cookie(settings.AUTH_COOKIE_ACCESS, path='/')

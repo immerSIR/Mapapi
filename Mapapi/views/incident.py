@@ -14,7 +14,12 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from drf_spectacular.utils import extend_schema
+from drf_spectacular.utils import (
+    extend_schema, extend_schema_view, OpenApiParameter, OpenApiResponse,
+    OpenApiExample, inline_serializer,
+)
+from drf_spectacular.types import OpenApiTypes
+from rest_framework import serializers as drf_serializers
 
 from ..serializer import *
 from ..models import (
@@ -122,10 +127,27 @@ def terminate_active_collaborations(incident):
     ).update(status=COLLAB_STATUS_TERMINATED)
 
 
-@extend_schema(
-    description="Endpoint allowing retrieval of incident by zone.",
-    request=IncidentSerializer,
-    responses={200: IncidentSerializer, 404: "Incident not found"},  
+@extend_schema_view(
+    get=extend_schema(
+        tags=['Incidents'],
+        operation_id='incidents_by_zone_list',
+        summary="Incidents d'une zone",
+        description=(
+            "Liste les incidents d'une zone (identifiant numérique). "
+            "Authentification requise ; le résultat est restreint selon le rôle web "
+            "du demandeur (super admin → tout, org/bureau → interne de son org + public "
+            "de son pays, sinon public uniquement)."
+        ),
+        parameters=[
+            OpenApiParameter('zone', OpenApiTypes.INT, OpenApiParameter.PATH,
+                             description="Identifiant numérique de la zone."),
+        ],
+        responses={
+            200: IncidentGetSerializer(many=True),
+            404: OpenApiResponse(description="Zone/incident introuvable."),
+        },
+    ),
+    post=extend_schema(exclude=True),
 )
 class IncidentByZoneAPIView(generics.CreateAPIView):
     permission_classes = ()
@@ -160,10 +182,53 @@ class IncidentByZoneAPIView(generics.CreateAPIView):
         except Incident.DoesNotExist:
             return Response(status=404)
 
-@extend_schema(
-    description="Endpoint allowing retrieval, updating, and deletion of an incident.",
-    request=IncidentSerializer,
-    responses={200: IncidentSerializer, 404: "Incident not found"},  
+@extend_schema_view(
+    get=extend_schema(
+        tags=['Incidents'],
+        operation_id='incidents_retrieve',
+        summary="Détail d'un incident",
+        description="Récupère un incident par son identifiant (UUID), avec ses "
+                    "organisations assignées, catégories et collaborations. Public.",
+        parameters=[
+            OpenApiParameter('id', OpenApiTypes.UUID, OpenApiParameter.PATH,
+                             description="Identifiant de l'incident."),
+        ],
+        responses={200: IncidentSerializer, 404: OpenApiResponse(description="Incident non trouvé.")},
+    ),
+    put=extend_schema(
+        tags=['Incidents'],
+        operation_id='incidents_update',
+        summary="Mettre à jour un incident",
+        description="Remplace les données d'un incident. Si `etat` passe à `resolved` "
+                    "ou `in_progress`, un email est envoyé au reporter.",
+        parameters=[
+            OpenApiParameter('id', OpenApiTypes.UUID, OpenApiParameter.PATH,
+                             description="Identifiant de l'incident."),
+        ],
+        request=IncidentSerializer,
+        responses={
+            200: IncidentSerializer,
+            400: OpenApiResponse(description="Données invalides."),
+            404: OpenApiResponse(description="Incident non trouvé."),
+        },
+    ),
+    delete=extend_schema(
+        tags=['Incidents'],
+        operation_id='incidents_destroy',
+        summary="Supprimer un incident (corbeille)",
+        description="Suppression logique (is_deleted=True). Réservé au Super Admin ou à "
+                    "une organisation propriétaire de l'incident.",
+        parameters=[
+            OpenApiParameter('id', OpenApiTypes.UUID, OpenApiParameter.PATH,
+                             description="Identifiant de l'incident."),
+        ],
+        responses={
+            204: OpenApiResponse(description="Incident supprimé (logique)."),
+            403: OpenApiResponse(description="Droits insuffisants."),
+            404: OpenApiResponse(description="Incident non trouvé."),
+        },
+    ),
+    post=extend_schema(exclude=True),
 )
 class IncidentAPIView(generics.CreateAPIView):
     permission_classes = ()
@@ -243,15 +308,34 @@ class IncidentAPIView(generics.CreateAPIView):
         item.save(update_fields=['is_deleted', 'deleted_at'])
         return Response(status=204)
 
-@extend_schema(
-    description="Endpoint for creating and retrieve a new incident."
-        "Users can submit details of an incident by providing the required information via a POST request."
-        "The submitted data will be validated and stored in the system."
-        "Upon success, a status code 201 (Created) will be returned along with details of the newly created incident."
-        "In case of validation errors or issues with creating the incident, a status code 400 (Bad Request) will be returned along with information about the encountered errors."
-        "Users must ensure that the provided data adheres to the format and constraints defined for incidents in the system.",
-    request=IncidentSerializer,  
-    responses={201: IncidentSerializer, 400: "Bad Request"},  
+@extend_schema_view(
+    get=extend_schema(
+        tags=['Incidents'],
+        operation_id='incidents_list',
+        summary="Lister les incidents",
+        description="Liste paginée des incidents, restreinte selon le rôle web du "
+                    "demandeur (authentification requise).",
+        parameters=[
+            OpenApiParameter('page', OpenApiTypes.INT, OpenApiParameter.QUERY,
+                             description="Numéro de page."),
+            OpenApiParameter('page_size', OpenApiTypes.INT, OpenApiParameter.QUERY,
+                             description="Taille de page."),
+        ],
+        responses={200: IncidentGetSerializer(many=True)},
+    ),
+    post=extend_schema(
+        tags=['Incidents'],
+        operation_id='incidents_create',
+        summary="Déclarer un incident",
+        description="Crée un incident (déclaration citoyenne/mobile, public). Crée la zone "
+                    "si nécessaire, +1 point au reporter, déclenche l'analyse IA (Prediction) "
+                    "et la conversion vidéo éventuelle.",
+        request=IncidentSerializer,
+        responses={
+            201: IncidentSerializer,
+            400: OpenApiResponse(description="Données invalides ou champ `zone` manquant."),
+        },
+    ),
 )
 class IncidentAPIListView(generics.CreateAPIView):
     permission_classes = ()
@@ -356,9 +440,14 @@ class IncidentAPIListView(generics.CreateAPIView):
         return Response(serializer.data, status=status.HTTP_201_CREATED)
 
 
-@extend_schema(
-    description="Endpoint allowing retrieval of incidents reported by the authenticated user.",
+@extend_schema_view(
+    get=extend_schema(
+    tags=['Incidents'],
+    operation_id='incidents_mine_list',
+    summary="Mes incidents déclarés",
+    description="Incidents reportés par l'utilisateur connecté (authentification requise).",
     responses={200: IncidentGetSerializer(many=True)},
+    ),
 )
 class MyIncidentsView(generics.ListAPIView):
     """GET /my-incidents/ — incidents reportés par l'utilisateur connecté."""
@@ -374,9 +463,21 @@ class MyIncidentsView(generics.ListAPIView):
         )
 
 
-@extend_schema(
-    description="Incidents de l'organisation. Filtre ?source=agents|citizens|all (défaut: all).",
+@extend_schema_view(
+    get=extend_schema(
+    tags=['Incidents'],
+    operation_id='incidents_org_list',
+    summary="Incidents de mon organisation",
+    description="Incidents liés à l'organisation de l'utilisateur connecté, en mode de prise "
+                "en charge interne. Filtrable par origine du reporter.",
+    parameters=[
+        OpenApiParameter('source', OpenApiTypes.STR, OpenApiParameter.QUERY,
+                         enum=['agents', 'citizens', 'all'], required=False,
+                         description="agents = reportés par les agents de terrain de l'org ; "
+                                     "citizens = reportés par les citoyens ; all (défaut) = tous."),
+    ],
     responses={200: IncidentGetSerializer(many=True)},
+    ),
 )
 class OrgIncidentsView(generics.ListAPIView):
     """GET /org-incidents/ — incidents liés à l'organisation de l'utilisateur.
@@ -430,6 +531,23 @@ def _assigned_agent_dict(assignment):
     }
 
 
+@extend_schema_view(
+    get=extend_schema(
+    tags=['Prise en charge & Collaboration'],
+    operation_id='incidents_my_interventions_list',
+    summary="Mes interventions",
+    description="Incidents sur lesquels l'utilisateur (ou son organisation) travaille "
+                "réellement (prise en charge perso/org, assignation org acceptée, "
+                "collaboration acceptée, ou agent assigné). Chaque incident est enrichi "
+                "de `assigned_agents` et `reports_count`. Authentification requise.",
+    responses={200: OpenApiResponse(
+        response=IncidentGetSerializer(many=True),
+        description="Liste d'incidents (IncidentGetSerializer) enrichis de "
+                    "`assigned_agents`[{id,name,email,phone,org_role,organisation_id,"
+                    "organisation_name,assignment_status,deadline}] et `reports_count`.",
+    )},
+    ),
+)
 class MyInterventionsView(APIView):
     """GET /my-interventions/ — incidents sur lesquels l'utilisateur (ou son
     organisation) travaille réellement, chacun avec TOUS les agents assignés et
@@ -467,6 +585,23 @@ class MyInterventionsView(APIView):
         return Response(data, status=status.HTTP_200_OK)
 
 
+@extend_schema_view(
+    get=extend_schema(
+    tags=['Prise en charge & Collaboration'],
+    operation_id='incidents_reports_list',
+    summary="Rapports d'un incident",
+    description="Tous les rapports d'agents liés à l'incident (via FK ou M2M), avec "
+                "auteur et organisation. Authentification requise.",
+    parameters=[
+        OpenApiParameter('incident_id', OpenApiTypes.UUID, OpenApiParameter.PATH,
+                         description="Identifiant de l'incident."),
+    ],
+    responses={
+        200: IncidentReportSerializer(many=True),
+        404: OpenApiResponse(description="Incident non trouvé."),
+    },
+    ),
+)
 class IncidentReportsView(APIView):
     """GET /incidents/<incident_id>/reports/ — tous les rapports d'agents liés à
     l'incident (FK incident OU M2M incidents), avec auteur + organisation.
@@ -492,6 +627,42 @@ class IncidentReportsView(APIView):
         )
 
 
+@extend_schema_view(
+    get=extend_schema(
+        tags=['Prise en charge & Collaboration'],
+        operation_id='incidents_assignments_list',
+        summary="Lister les assignations d'un incident",
+        description="Liste les agents de terrain assignés à l'incident. Réservé au staff "
+                    "ou à un admin/bureau de l'organisation propriétaire de l'incident.",
+        parameters=[
+            OpenApiParameter('incident_id', OpenApiTypes.UUID, OpenApiParameter.PATH,
+                             description="Identifiant de l'incident."),
+        ],
+        responses={
+            200: IncidentAssignmentSerializer(many=True),
+            403: OpenApiResponse(description="Droits insuffisants."),
+            404: OpenApiResponse(description="Incident non trouvé."),
+        },
+    ),
+    post=extend_schema(
+        tags=['Prise en charge & Collaboration'],
+        operation_id='incidents_assignments_create',
+        summary="Assigner un incident à un agent",
+        description="Assigne un agent de terrain à l'incident et lui envoie un email. "
+                    "Réservé à un administrateur d'organisation (ou Super Admin).",
+        parameters=[
+            OpenApiParameter('incident_id', OpenApiTypes.UUID, OpenApiParameter.PATH,
+                             description="Identifiant de l'incident."),
+        ],
+        request=IncidentAssignmentSerializer,
+        responses={
+            201: IncidentAssignmentSerializer,
+            400: OpenApiResponse(description="Données invalides."),
+            403: OpenApiResponse(description="Droits insuffisants (admin d'organisation requis)."),
+            404: OpenApiResponse(description="Incident non trouvé."),
+        },
+    ),
+)
 class IncidentAssignmentListCreateView(generics.ListCreateAPIView):
     permission_classes = [IsAuthenticated]
     serializer_class = IncidentAssignmentSerializer
@@ -606,6 +777,67 @@ class IncidentAssignmentListCreateView(generics.ListCreateAPIView):
         return False
 
 
+_ASSIGNMENT_DETAIL_PARAMS = [
+    OpenApiParameter('incident_id', OpenApiTypes.UUID, OpenApiParameter.PATH,
+                     description="Identifiant de l'incident."),
+    OpenApiParameter('pk', OpenApiTypes.UUID, OpenApiParameter.PATH,
+                     description="Identifiant de l'assignation."),
+]
+
+
+@extend_schema_view(
+    get=extend_schema(
+        tags=['Prise en charge & Collaboration'],
+        operation_id='incidents_assignments_retrieve',
+        summary="Détail d'une assignation",
+        description="Récupère une assignation d'agent. Réservé au staff ou à un "
+                    "admin/bureau de l'organisation propriétaire de l'incident.",
+        parameters=_ASSIGNMENT_DETAIL_PARAMS,
+        responses={
+            200: IncidentAssignmentSerializer,
+            403: OpenApiResponse(description="Droits insuffisants."),
+            404: OpenApiResponse(description="Assignation non trouvée."),
+        },
+    ),
+    put=extend_schema(
+        tags=['Prise en charge & Collaboration'],
+        operation_id='incidents_assignments_update',
+        summary="Modifier une assignation",
+        description="Met à jour une assignation d'agent (droits de gestion requis).",
+        parameters=_ASSIGNMENT_DETAIL_PARAMS,
+        request=IncidentAssignmentSerializer,
+        responses={
+            200: IncidentAssignmentSerializer,
+            403: OpenApiResponse(description="Droits insuffisants."),
+            404: OpenApiResponse(description="Assignation non trouvée."),
+        },
+    ),
+    patch=extend_schema(
+        tags=['Prise en charge & Collaboration'],
+        operation_id='incidents_assignments_partial_update',
+        summary="Modifier partiellement une assignation",
+        description="Met à jour partiellement une assignation d'agent (droits de gestion requis).",
+        parameters=_ASSIGNMENT_DETAIL_PARAMS,
+        request=IncidentAssignmentSerializer,
+        responses={
+            200: IncidentAssignmentSerializer,
+            403: OpenApiResponse(description="Droits insuffisants."),
+            404: OpenApiResponse(description="Assignation non trouvée."),
+        },
+    ),
+    delete=extend_schema(
+        tags=['Prise en charge & Collaboration'],
+        operation_id='incidents_assignments_destroy',
+        summary="Supprimer une assignation",
+        description="Supprime une assignation d'agent (droits de gestion requis).",
+        parameters=_ASSIGNMENT_DETAIL_PARAMS,
+        responses={
+            204: OpenApiResponse(description="Assignation supprimée."),
+            403: OpenApiResponse(description="Droits insuffisants."),
+            404: OpenApiResponse(description="Assignation non trouvée."),
+        },
+    ),
+)
 class IncidentAssignmentDetailView(generics.RetrieveUpdateDestroyAPIView):
     permission_classes = [IsAuthenticated]
     serializer_class = IncidentAssignmentSerializer
@@ -623,6 +855,16 @@ class IncidentAssignmentDetailView(generics.RetrieveUpdateDestroyAPIView):
         return obj
 
 
+@extend_schema_view(
+    get=extend_schema(
+    tags=['Prise en charge & Collaboration'],
+    operation_id='incidents_agent_assigned_list',
+    summary="Incidents assignés à l'agent connecté",
+    description="Assignations de l'agent de terrain connecté (réservé aux agents de "
+                "terrain ; vide pour les autres rôles).",
+    responses={200: IncidentAssignmentSerializer(many=True)},
+    ),
+)
 class AgentAssignedIncidentsView(generics.ListAPIView):
     permission_classes = [IsAuthenticated]
     serializer_class = IncidentAssignmentSerializer
@@ -634,6 +876,31 @@ class AgentAssignedIncidentsView(generics.ListAPIView):
         return IncidentAssignment.objects.filter(agent=user).select_related('incident', 'agent', 'assigned_by')
 
 
+@extend_schema_view(
+    get=extend_schema(
+        tags=['Prise en charge & Collaboration'],
+        operation_id='field_reports_list',
+        summary="Lister les rapports de terrain",
+        description="Rapports de visite terrain, filtrés selon le rôle (staff → tous, "
+                    "agent de terrain → les siens, sinon ceux de son organisation).",
+        responses={200: FieldReportSerializer(many=True)},
+    ),
+    post=extend_schema(
+        tags=['Prise en charge & Collaboration'],
+        operation_id='field_reports_create',
+        summary="Créer un rapport de terrain",
+        description="Crée un rapport de visite (multipart, champ `photo`). Réservé aux "
+                    "agents de terrain pour un incident qui leur est assigné ; passe "
+                    "l'assignation correspondante à l'état `reported`.",
+        request=FieldReportSerializer,
+        responses={
+            201: FieldReportSerializer,
+            400: OpenApiResponse(description="Données invalides."),
+            403: OpenApiResponse(description="Réservé aux agents de terrain assignés."),
+            404: OpenApiResponse(description="Incident non trouvé."),
+        },
+    ),
+)
 class FieldReportListCreateView(generics.ListCreateAPIView):
     permission_classes = [IsAuthenticated]
     serializer_class = FieldReportSerializer
@@ -669,10 +936,24 @@ class FieldReportListCreateView(generics.ListCreateAPIView):
         return Response(serializer.data, status=status.HTTP_201_CREATED)
 
 
-@extend_schema(
-    description="Connexion d'un agent de terrain via son code agent.",
-    request={'application/json': {'type': 'object', 'properties': {'agent_code': {'type': 'string'}}}},
-    responses={200: 'Tokens JWT'},
+@extend_schema_view(
+    post=extend_schema(
+    tags=['Authentification'],
+    operation_id='agent_login',
+    summary="Connexion agent (code agent)",
+    description="Connexion d'un agent de terrain via son `agent_code`. Retourne des tokens "
+                "JWT (access/refresh) et les infos de l'agent. Public.",
+    request=inline_serializer(
+        name='AgentCodeLoginRequest',
+        fields={'agent_code': drf_serializers.CharField()},
+    ),
+    responses={
+        200: OpenApiResponse(description="Tokens JWT {access, refresh, user{...}}."),
+        400: OpenApiResponse(description="agent_code manquant."),
+        401: OpenApiResponse(description="Code agent invalide."),
+        403: OpenApiResponse(description="Compte désactivé."),
+    },
+    ),
 )
 class AgentCodeLoginView(APIView):
     """POST /agent-login/ — login par agent_code, retourne des tokens JWT."""
@@ -716,9 +997,24 @@ class AgentCodeLoginView(APIView):
         }, status=status.HTTP_200_OK)
 
 
-@extend_schema(
-    description="Basculer la visibilité publique d'un incident (is_public).",
-    responses={200: IncidentSerializer},
+@extend_schema_view(
+    post=extend_schema(
+    tags=['Incidents'],
+    operation_id='incidents_toggle_public',
+    summary="Basculer la visibilité d'un incident",
+    description="Bascule le drapeau `is_public` d'un incident. Réservé à l'admin/bureau de "
+                "l'organisation du reporter ou au staff. Sans corps de requête.",
+    parameters=[
+        OpenApiParameter('incident_id', OpenApiTypes.UUID, OpenApiParameter.PATH,
+                         description="Identifiant de l'incident."),
+    ],
+    request=None,
+    responses={
+        200: OpenApiResponse(description="{status, is_public, message}."),
+        403: OpenApiResponse(description="Droits insuffisants."),
+        404: OpenApiResponse(description="Incident non trouvé."),
+    },
+    ),
 )
 class ToggleIncidentPublicView(APIView):
     """POST /incidents/<incident_id>/toggle-public/ — bascule is_public."""
@@ -755,10 +1051,21 @@ class ToggleIncidentPublicView(APIView):
         }, status=status.HTTP_200_OK)
 
 
-@extend_schema(
-    description="Endpoint allowing retrieval an incident resolved.",
-    request=IncidentSerializer,
-    responses={200: IncidentSerializer, 404: "Incident not found"},  
+@extend_schema_view(
+    get=extend_schema(
+        tags=['Référentiel & Statistiques'],
+        operation_id='incidents_resolved_list',
+        summary="Incidents résolus",
+        description="Liste paginée des incidents à l'état `resolved`. Public.",
+        parameters=[
+            OpenApiParameter('page', OpenApiTypes.INT, OpenApiParameter.QUERY,
+                             description="Numéro de page."),
+            OpenApiParameter('page_size', OpenApiTypes.INT, OpenApiParameter.QUERY,
+                             description="Taille de page."),
+        ],
+        responses={200: IncidentGetSerializer(many=True)},
+    ),
+    post=extend_schema(exclude=True),
 )
 class IncidentResolvedAPIListView(generics.CreateAPIView):
     permission_classes = ()
@@ -772,10 +1079,37 @@ class IncidentResolvedAPIListView(generics.CreateAPIView):
         serializer = IncidentGetSerializer(result_page, many=True)
         return paginator.get_paginated_response(serializer.data)
 
-@extend_schema(
-    description="Endpoint allowing filtering retrieval incidents",
-    request=IncidentSerializer,
-    responses={200: IncidentSerializer, 404: "incident not found"},  
+@extend_schema_view(
+    get=extend_schema(
+    tags=['Incidents'],
+    operation_id='incidents_filter_list',
+    summary="Liste filtrée pour la carte du dashboard",
+    description="Liste légère d'incidents pour la carte (IncidentMapSerializer, avec "
+                "`severity`). Le paramètre `scope` et le filtre de date `filter_type` se "
+                "combinent. `scope=mine` requiert l'authentification ; les autres scopes "
+                "sont publics.",
+    parameters=[
+        OpenApiParameter(
+            'scope', OpenApiTypes.STR, OpenApiParameter.QUERY, required=False,
+            enum=['all', 'mine', 'resolved', 'unresolved'],
+            description="all/tous (défaut) ; mine/interne = incidents que l'org du "
+                        "demandeur traite (auth requise) ; resolved/resolu ; "
+                        "unresolved/non_resolu.",
+        ),
+        OpenApiParameter(
+            'filter_type', OpenApiTypes.STR, OpenApiParameter.QUERY, required=False,
+            enum=['today', 'yesterday', 'last_7_days', 'last_30_days',
+                  'this_month', 'last_month', 'custom_range'],
+            description="Fenêtre de date sur created_at. `custom_range` exige "
+                        "`custom_start` et `custom_end`.",
+        ),
+        OpenApiParameter('custom_start', OpenApiTypes.DATE, OpenApiParameter.QUERY,
+                         required=False, description="Début (YYYY-MM-DD) si filter_type=custom_range."),
+        OpenApiParameter('custom_end', OpenApiTypes.DATE, OpenApiParameter.QUERY,
+                         required=False, description="Fin (YYYY-MM-DD) si filter_type=custom_range."),
+    ],
+    responses={200: IncidentMapSerializer(many=True)},
+    ),
 )
 class IncidentFilterView(APIView):
     def get(self, request, *args, **kwargs):
@@ -827,6 +1161,21 @@ class IncidentFilterView(APIView):
         return Response(serializer.data, status=status.HTTP_200_OK)
 
 
+@extend_schema_view(
+    get=extend_schema(
+    tags=['Référentiel & Statistiques'],
+    operation_id='incidents_dashboard_stats',
+    summary="Statistiques du dashboard",
+    description="Agrégats KPI calculés côté base pour le dashboard (authentification "
+                "requise) : totaux, répartition par localité, catégories, gravité et "
+                "activité récente. Ne renvoie jamais la liste complète des incidents.",
+    responses={200: OpenApiResponse(description=(
+        "{total_alerts, active_responses, resolved_incidents, by_zone[{name,count}], "
+        "by_category[{name,count,percentage}], by_severity{high/medium/low:{count,"
+        "percentage}}, recent_activity[{id,title,etat,zone,created_at,taken_by}]}."
+    ))},
+    ),
+)
 class IncidentDashboardStatsView(APIView):
     """Statistiques agrégées pour le dashboard (cartes KPI + widgets Par Localité /
     Top catégories / Gravité + activité récente).
@@ -892,10 +1241,21 @@ class IncidentDashboardStatsView(APIView):
         }, status=status.HTTP_200_OK)
 
 
-@extend_schema(
-    description="Endpoint allowing retrieval an incident not resolved.",
-    request=IncidentSerializer,
-    responses={200: IncidentSerializer, 404: "Incident not found"},  
+@extend_schema_view(
+    get=extend_schema(
+        tags=['Référentiel & Statistiques'],
+        operation_id='incidents_not_resolved_list',
+        summary="Incidents non résolus",
+        description="Liste paginée des incidents à l'état `declared`. Public.",
+        parameters=[
+            OpenApiParameter('page', OpenApiTypes.INT, OpenApiParameter.QUERY,
+                             description="Numéro de page."),
+            OpenApiParameter('page_size', OpenApiTypes.INT, OpenApiParameter.QUERY,
+                             description="Taille de page."),
+        ],
+        responses={200: IncidentGetSerializer(many=True)},
+    ),
+    post=extend_schema(exclude=True),
 )
 class IncidentNotResolvedAPIListView(generics.CreateAPIView):
     permission_classes = ()
@@ -909,6 +1269,22 @@ class IncidentNotResolvedAPIListView(generics.CreateAPIView):
         serializer = IncidentGetSerializer(result_page, many=True)
         return paginator.get_paginated_response(serializer.data)
 
+@extend_schema_view(
+    get=extend_schema(
+    tags=['Référentiel & Statistiques'],
+    operation_id='incidents_by_month_list',
+    summary="Incidents par mois (année courante)",
+    description="Incidents de l'année courante, optionnellement filtrés sur un mois. Public.",
+    parameters=[
+        OpenApiParameter('month', OpenApiTypes.INT, OpenApiParameter.QUERY, required=False,
+                         description="Numéro de mois (1-12) ; toute l'année si omis."),
+    ],
+    responses={
+        200: OpenApiResponse(description="{status, message, data:[Incident...]}."),
+        400: OpenApiResponse(description="Paramètre month invalide."),
+    },
+    ),
+)
 class IncidentByMonthAPIListView(generics.ListAPIView):
     permission_classes = ()
     queryset = Incident.objects.all()
@@ -934,10 +1310,21 @@ class IncidentByMonthAPIListView(generics.ListAPIView):
         }, status=status.HTTP_200_OK)
 
 
-@extend_schema(
-    description="Endpoint allowing retrieval of incident by month on zone.",
-    request=IncidentSerializer,
-    responses={200: IncidentSerializer, 404: "Incident not found"},  
+@extend_schema_view(
+    get=extend_schema(
+        tags=['Référentiel & Statistiques'],
+        operation_id='incidents_by_month_zone_list',
+        summary="Incidents par mois pour une zone",
+        description="Répartition mensuelle (total/résolus/non résolus) des incidents "
+                    "d'une zone sur l'année courante. Public.",
+        parameters=[
+            OpenApiParameter('zone', OpenApiTypes.STR, OpenApiParameter.PATH,
+                             description="Nom de la zone."),
+        ],
+        responses={200: OpenApiResponse(
+            description="{status, message, data:[{month,total,resolved,unresolved}]}.")},
+    ),
+    post=extend_schema(exclude=True),
 )
 class IncidentByMonthByZoneAPIView(generics.CreateAPIView):
     permission_classes = (
@@ -970,10 +1357,17 @@ class IncidentByMonthByZoneAPIView(generics.CreateAPIView):
             "data": listData
         }, status=status.HTTP_200_OK)
 
-@extend_schema(
-    description="Endpoint allowing retrieval of incident on week.",
-    request=IncidentSerializer,
-    responses={200: IncidentSerializer, 404: "Incident not found"},  
+@extend_schema_view(
+    get=extend_schema(
+        tags=['Référentiel & Statistiques'],
+        operation_id='incidents_on_week_list',
+        summary="Incidents de la semaine (par jour)",
+        description="Répartition jour par jour (total/résolus/non résolus) des incidents "
+                    "de la dernière semaine. Public.",
+        responses={200: OpenApiResponse(
+            description="{status, message, data:[{day,total,resolved,unresolved}]}.")},
+    ),
+    post=extend_schema(exclude=True),
 )
 class IncidentOnWeekAPIListView(generics.CreateAPIView):
     permission_classes = (
@@ -1005,10 +1399,21 @@ class IncidentOnWeekAPIListView(generics.CreateAPIView):
             "data": listData
         }, status=status.HTTP_200_OK)
 
-@extend_schema(
-    description="Endpoint allowing retrieval of incident on week by zone.",
-    request=IncidentSerializer,
-    responses={200: IncidentSerializer, 404: "Incident not found"},  
+@extend_schema_view(
+    get=extend_schema(
+        tags=['Référentiel & Statistiques'],
+        operation_id='incidents_on_week_zone_list',
+        summary="Incidents de la semaine pour une zone (par jour)",
+        description="Répartition jour par jour (total/résolus/non résolus) des incidents "
+                    "d'une zone sur la dernière semaine. Public.",
+        parameters=[
+            OpenApiParameter('zone', OpenApiTypes.STR, OpenApiParameter.PATH,
+                             description="Nom de la zone."),
+        ],
+        responses={200: OpenApiResponse(
+            description="{status, message, data:[{day,total,resolved,unresolved}]}.")},
+    ),
+    post=extend_schema(exclude=True),
 )
 class IncidentByWeekByZoneAPIView(generics.CreateAPIView):
     permission_classes = (
@@ -1041,15 +1446,22 @@ class IncidentByWeekByZoneAPIView(generics.CreateAPIView):
             "data": listData
         }, status=status.HTTP_200_OK)
 
-@extend_schema(
-    description="Endpoint allowing retrieval, updating, and deletion of a category.",
-    request=CategorySerializer,
-    responses={200: CategorySerializer, 404: "category not found"},  
-)
-
-@extend_schema(
-    description="Endpoint for search incidents",
-    responses={200: IncidentSerializer(many=True)},
+@extend_schema_view(
+    get=extend_schema(
+    tags=['Incidents'],
+    operation_id='incidents_search_list',
+    summary="Rechercher des incidents",
+    description="Recherche d'incidents dont le titre ou la description contient "
+                "`search_term`. Public.",
+    parameters=[
+        OpenApiParameter('search_term', OpenApiTypes.STR, OpenApiParameter.QUERY,
+                         required=True, description="Terme recherché (titre/description)."),
+    ],
+    responses={
+        200: IncidentSerializer(many=True),
+        400: OpenApiResponse(description="Paramètre 'search_term' manquant."),
+    },
+    ),
 )
 class IncidentSearchView(generics.ListAPIView):
     def get(self, request):
@@ -1064,9 +1476,29 @@ class IncidentSearchView(generics.ListAPIView):
         serializer = IncidentSerializer(results, many=True)
         return Response(serializer.data, status=status.HTTP_200_OK)
 
-@extend_schema(
-    description="Endpoint to change incident status",
-    responses={200: UserActionSerializer()},
+@extend_schema_view(
+    post=extend_schema(
+    tags=['Incidents'],
+    operation_id='incidents_handle_status',
+    summary="Faire avancer le statut d'un incident (legacy)",
+    description="Avance l'état d'un incident dans l'ordre `declared` → "
+                "`taken_into_account` → `resolved`, et journalise une UserAction. "
+                "Authentification requise.",
+    parameters=[
+        OpenApiParameter('incident_id', OpenApiTypes.UUID, OpenApiParameter.PATH,
+                         description="Identifiant de l'incident."),
+    ],
+    request=inline_serializer(
+        name='IncidentHandleStatusRequest',
+        fields={'action': drf_serializers.ChoiceField(
+            choices=['taken_into_account', 'resolved'])},
+    ),
+    responses={
+        200: OpenApiResponse(description="{status, message, user, action}."),
+        400: OpenApiResponse(description="Action invalide ou ordre des états non respecté."),
+        404: OpenApiResponse(description="Incident non trouvé."),
+    },
+    ),
 )
 class HandleIncidentView(APIView):
     permission_classes = [IsAuthenticated]
@@ -1110,9 +1542,22 @@ class HandleIncidentView(APIView):
             "action": action_data
         }, status=status.HTTP_200_OK)
 
-@extend_schema(
-    description="Endpoint to get user who took incident into account",
-    responses={200: UserSerializer()},
+@extend_schema_view(
+    get=extend_schema(
+    tags=['Incidents'],
+    operation_id='incidents_taken_by_user',
+    summary="Utilisateur ayant pris en charge l'incident",
+    description="Renvoie l'utilisateur (`taken_by`) ayant pris l'incident en charge. "
+                "Authentification requise.",
+    parameters=[
+        OpenApiParameter('incident_id', OpenApiTypes.UUID, OpenApiParameter.PATH,
+                         description="Identifiant de l'incident."),
+    ],
+    responses={
+        200: OpenApiResponse(description="{status, user}."),
+        404: OpenApiResponse(description="Incident non trouvé ou non pris en charge."),
+    },
+    ),
 )
 class IncidentUserView(APIView):
     permission_classes = [IsAuthenticated]
@@ -1133,9 +1578,13 @@ class IncidentUserView(APIView):
         }, status=status.HTTP_200_OK)
 
 
-@extend_schema(
+@extend_schema_view(
+    post=extend_schema(
+    tags=['Prise en charge & Collaboration'],
+    operation_id='incidents_take_in_charge',
+    summary="Prendre en charge un incident",
     description=(
-        "Prise en charge d'un incident.\n\n"
+        "Prise en charge d'un incident (org_admin requis).\n\n"
         "Body JSON :\n"
         "- mode = 'internal' : prise en charge interne (visible uniquement par les membres de l'organisation).\n"
         "- mode = 'collaborative' : prise en charge collaborative ouverte aux autres organisations. "
@@ -1145,7 +1594,26 @@ class IncidentUserView(APIView):
         "- contributor est auto-accepté tant qu'aucun leader n'est désigné ; sinon il passe en pending.\n"
         "- leader définit incident.taken_by et remet les contributors déjà acceptés en pending pour validation."
     ),
-    responses={200: IncidentSerializer},
+    parameters=[
+        OpenApiParameter('incident_id', OpenApiTypes.UUID, OpenApiParameter.PATH,
+                         description="Identifiant de l'incident."),
+    ],
+    request=inline_serializer(
+        name='IncidentTakeInChargeRequest',
+        fields={
+            'mode': drf_serializers.ChoiceField(choices=['internal', 'collaborative']),
+            'role': drf_serializers.ChoiceField(
+                choices=['leader', 'contributor', 'observer'], required=False),
+        },
+    ),
+    responses={
+        200: OpenApiResponse(description="{status, message, mode, data:Incident, collaboration}."),
+        400: OpenApiResponse(description="mode/role invalide, incident déjà pris en charge ou clôturé, "
+                                         "collaboration en doublon, leader déjà désigné."),
+        403: OpenApiResponse(description="Droits insuffisants (admin d'organisation requis)."),
+        404: OpenApiResponse(description="Incident non trouvé."),
+    },
+    ),
 )
 class TakeInChargeView(APIView):
     """POST /incidents/<incident_id>/take_in_charge/"""
@@ -1318,10 +1786,32 @@ class TakeInChargeView(APIView):
         }, status=status.HTTP_200_OK)
 
 
-@extend_schema(
-    description="Clôturer un incident. Requiert resolution_start_date et resolution_end_date. "
-                "Toutes les tâches doivent être terminées (done ou failed).",
-    responses={200: IncidentSerializer},
+@extend_schema_view(
+    post=extend_schema(
+    tags=['Prise en charge & Collaboration'],
+    operation_id='incidents_close',
+    summary="Clôturer un incident",
+    description="Clôture un incident (état → `resolved`). Réservé à l'admin/leader de "
+                "l'incident. Requiert `resolution_start_date` et `resolution_end_date` ; "
+                "toutes les tâches doivent être terminées (done ou failed).",
+    parameters=[
+        OpenApiParameter('incident_id', OpenApiTypes.UUID, OpenApiParameter.PATH,
+                         description="Identifiant de l'incident."),
+    ],
+    request=inline_serializer(
+        name='IncidentCloseRequest',
+        fields={
+            'resolution_start_date': drf_serializers.DateField(),
+            'resolution_end_date': drf_serializers.DateField(),
+        },
+    ),
+    responses={
+        200: IncidentSerializer,
+        400: OpenApiResponse(description="Dates manquantes, tâches non terminées ou incident déjà clôturé."),
+        403: OpenApiResponse(description="Droits insuffisants."),
+        404: OpenApiResponse(description="Incident non trouvé."),
+    },
+    ),
 )
 class CloseIncidentView(APIView):
     """POST /incidents/<incident_id>/close/"""
@@ -1375,12 +1865,26 @@ class CloseIncidentView(APIView):
 #   in_validation ──reject-resolution(motif)──▶ taken_into_account
 # ============================================================================
 
-@extend_schema(
+@extend_schema_view(
+    post=extend_schema(
     description=(
         "Préparer une résolution (Agent de bureau / Admin « monte le dossier »). "
         "Exige l'état 'taken_into_account'. Passe l'incident en 'resolution_prepared'."
     ),
-    responses={200: IncidentGetSerializer, 400: "État invalide", 404: "Incident non trouvé"},
+    tags=['Prise en charge & Collaboration'],
+    operation_id='incidents_prepare_resolution',
+    summary="Préparer une résolution",
+    parameters=[
+        OpenApiParameter('incident_id', OpenApiTypes.UUID, OpenApiParameter.PATH,
+                         description="Identifiant de l'incident."),
+    ],
+    request=None,
+    responses={
+        200: IncidentGetSerializer,
+        400: OpenApiResponse(description="État invalide (doit être « Pris en compte »)."),
+        404: OpenApiResponse(description="Incident non trouvé."),
+    },
+    ),
 )
 class PrepareResolutionView(APIView):
     """POST /incidents/<incident_id>/prepare-resolution/ — org_admin OU bureau_agent."""
@@ -1406,12 +1910,26 @@ class PrepareResolutionView(APIView):
         return Response(IncidentGetSerializer(incident).data, status=status.HTTP_200_OK)
 
 
-@extend_schema(
+@extend_schema_view(
+    post=extend_schema(
     description=(
         "Renvoyer un dossier de résolution pour complément (Admin). "
         "Exige l'état 'resolution_prepared'. Repasse l'incident en 'taken_into_account'."
     ),
-    responses={200: IncidentGetSerializer, 400: "État invalide", 404: "Incident non trouvé"},
+    tags=['Prise en charge & Collaboration'],
+    operation_id='incidents_return_for_completion',
+    summary="Renvoyer pour complément",
+    parameters=[
+        OpenApiParameter('incident_id', OpenApiTypes.UUID, OpenApiParameter.PATH,
+                         description="Identifiant de l'incident."),
+    ],
+    request=None,
+    responses={
+        200: IncidentGetSerializer,
+        400: OpenApiResponse(description="État invalide (doit être « Résolution préparée »)."),
+        404: OpenApiResponse(description="Incident non trouvé."),
+    },
+    ),
 )
 class ReturnForCompletionView(APIView):
     """POST /incidents/<incident_id>/return-for-completion/ — org_admin uniquement."""
@@ -1435,13 +1953,27 @@ class ReturnForCompletionView(APIView):
         return Response(IncidentGetSerializer(incident).data, status=status.HTTP_200_OK)
 
 
-@extend_schema(
+@extend_schema_view(
+    post=extend_schema(
     description=(
         "Déclarer un incident résolu (Leader / Admin). Déclenche le contrôle Super Admin. "
         "Exige l'état 'taken_into_account' ou 'resolution_prepared'. "
         "Passe l'incident en 'in_validation' et fixe une échéance de validation à 72h."
     ),
-    responses={200: IncidentGetSerializer, 400: "État invalide", 404: "Incident non trouvé"},
+    tags=['Prise en charge & Collaboration'],
+    operation_id='incidents_declare_resolved',
+    summary="Déclarer résolu",
+    parameters=[
+        OpenApiParameter('incident_id', OpenApiTypes.UUID, OpenApiParameter.PATH,
+                         description="Identifiant de l'incident."),
+    ],
+    request=None,
+    responses={
+        200: IncidentGetSerializer,
+        400: OpenApiResponse(description="État invalide (doit être « Pris en compte » ou « Résolution préparée »)."),
+        404: OpenApiResponse(description="Incident non trouvé."),
+    },
+    ),
 )
 class DeclareResolvedView(APIView):
     """POST /incidents/<incident_id>/declare-resolved/ — org_admin uniquement."""
@@ -1467,6 +1999,27 @@ class DeclareResolvedView(APIView):
         return Response(IncidentGetSerializer(incident).data, status=status.HTTP_200_OK)
 
 
+@extend_schema_view(
+    post=extend_schema(
+    tags=['Prise en charge & Collaboration'],
+    operation_id='incidents_disengage',
+    summary="Se désengager d'un incident",
+    description="Le leader (Admin d'organisation) se désengage d'un incident « Pris en "
+                "compte ». Seul → l'incident repasse « Déclaré » ; sinon le leadership est "
+                "proposé aux contributeurs (role=leader, status=pending).",
+    parameters=[
+        OpenApiParameter('incident_id', OpenApiTypes.UUID, OpenApiParameter.PATH,
+                         description="Identifiant de l'incident."),
+    ],
+    request=None,
+    responses={
+        200: OpenApiResponse(description="{message, incident:IncidentGetSerializer}."),
+        400: OpenApiResponse(description="État invalide (doit être « Pris en compte »)."),
+        403: OpenApiResponse(description="Réservé au leader / admin d'organisation."),
+        404: OpenApiResponse(description="Incident non trouvé."),
+    },
+    ),
+)
 class DisengageIncidentView(APIView):
     """POST /incidents/<incident_id>/disengage/ — le leader (Admin d'organisation)
     se désengage de l'incident (spec §3, §6).
@@ -1524,12 +2077,26 @@ class DisengageIncidentView(APIView):
         )
 
 
-@extend_schema(
+@extend_schema_view(
+    post=extend_schema(
     description=(
         "Valider une résolution (Super Admin). "
         "Exige l'état 'in_validation'. Passe l'incident en 'resolved_definitive'."
     ),
-    responses={200: IncidentGetSerializer, 400: "État invalide", 404: "Incident non trouvé"},
+    tags=['Prise en charge & Collaboration'],
+    operation_id='incidents_validate_resolution',
+    summary="Valider une résolution",
+    parameters=[
+        OpenApiParameter('incident_id', OpenApiTypes.UUID, OpenApiParameter.PATH,
+                         description="Identifiant de l'incident."),
+    ],
+    request=None,
+    responses={
+        200: IncidentGetSerializer,
+        400: OpenApiResponse(description="État invalide (doit être « en validation »)."),
+        404: OpenApiResponse(description="Incident non trouvé."),
+    },
+    ),
 )
 class ValidateResolutionView(APIView):
     """POST /incidents/<incident_id>/validate-resolution/ — super_admin uniquement."""
@@ -1557,14 +2124,30 @@ class ValidateResolutionView(APIView):
         return Response(IncidentGetSerializer(incident).data, status=status.HTTP_200_OK)
 
 
-@extend_schema(
+@extend_schema_view(
+    post=extend_schema(
     description=(
         "Refuser une résolution (Super Admin). Motif obligatoire. "
         "Exige l'état 'in_validation'. Repasse l'incident en 'taken_into_account' "
         "et enregistre le motif dans rejection_reason."
     ),
-    request={'application/json': {'type': 'object', 'properties': {'motif': {'type': 'string'}}}},
-    responses={200: IncidentGetSerializer, 400: "Motif manquant ou état invalide", 404: "Incident non trouvé"},
+    tags=['Prise en charge & Collaboration'],
+    operation_id='incidents_reject_resolution',
+    summary="Refuser une résolution",
+    parameters=[
+        OpenApiParameter('incident_id', OpenApiTypes.UUID, OpenApiParameter.PATH,
+                         description="Identifiant de l'incident."),
+    ],
+    request=inline_serializer(
+        name='IncidentRejectResolutionRequest',
+        fields={'motif': drf_serializers.CharField()},
+    ),
+    responses={
+        200: IncidentGetSerializer,
+        400: OpenApiResponse(description="Motif manquant ou état invalide (doit être « en validation »)."),
+        404: OpenApiResponse(description="Incident non trouvé."),
+    },
+    ),
 )
 class RejectResolutionView(APIView):
     """POST /incidents/<incident_id>/reject-resolution/ — super_admin uniquement."""
@@ -1596,14 +2179,30 @@ class RejectResolutionView(APIView):
         return Response(IncidentGetSerializer(incident).data, status=status.HTTP_200_OK)
 
 
-@extend_schema(
+@extend_schema_view(
+    post=extend_schema(
     description=(
         "« Signaler à mon Admin » (spec §4). Un agent de bureau recommande un "
         "incident repéré à l'Admin de son organisation. Notifie chaque org_admin "
         "de l'organisation du demandeur, avec un commentaire et un lien vers l'incident."
     ),
-    request={'application/json': {'type': 'object', 'properties': {'comment': {'type': 'string'}}}},
-    responses={200: "Notifications créées", 400: "Pas d'organisation", 404: "Incident non trouvé"},
+    tags=['Prise en charge & Collaboration'],
+    operation_id='incidents_report_to_admin',
+    summary="Signaler un incident à mon Admin",
+    parameters=[
+        OpenApiParameter('incident_id', OpenApiTypes.UUID, OpenApiParameter.PATH,
+                         description="Identifiant de l'incident."),
+    ],
+    request=inline_serializer(
+        name='IncidentReportToAdminRequest',
+        fields={'comment': drf_serializers.CharField(required=False)},
+    ),
+    responses={
+        200: OpenApiResponse(description="{status, message, notified_admins, incident_id, link}."),
+        400: OpenApiResponse(description="Vous n'êtes rattaché à aucune organisation."),
+        404: OpenApiResponse(description="Incident non trouvé."),
+    },
+    ),
 )
 class ReportToAdminView(APIView):
     """POST /incidents/<incident_id>/report-to-admin/ — bureau_agent uniquement."""
@@ -1666,15 +2265,32 @@ class ReportToAdminView(APIView):
 #   Tacite (sans réponse à 72 h) → tasks.auto_accept_overdue_assignments (D4)
 # ============================================================================
 
-@extend_schema(
+@extend_schema_view(
+    post=extend_schema(
     description=(
         "Assigner un incident à une ORGANISATION (Super Admin, spec §2). "
-        "Body {\"organisation_id\": N}. Crée une IncidentOrgAssignment 'pending' "
+        "Body {\"organisation_id\": ...}. Crée une IncidentOrgAssignment 'pending' "
         "avec une échéance de 72 h, et notifie les Admins de l'organisation cible. "
         "L'incident est assigné à l'organisation, jamais directement à un agent (T5)."
     ),
-    request={'application/json': {'type': 'object', 'properties': {'organisation_id': {'type': 'integer'}}}},
-    responses={201: IncidentOrgAssignmentSerializer, 400: "Org manquante ou assignation en attente", 404: "Incident non trouvé"},
+    tags=['Prise en charge & Collaboration'],
+    operation_id='incidents_assign_to_organisation',
+    summary="Assigner un incident à une organisation",
+    parameters=[
+        OpenApiParameter('incident_id', OpenApiTypes.UUID, OpenApiParameter.PATH,
+                         description="Identifiant de l'incident."),
+    ],
+    request=inline_serializer(
+        name='IncidentAssignToOrgRequest',
+        fields={'organisation_id': drf_serializers.UUIDField()},
+    ),
+    responses={
+        201: IncidentOrgAssignmentSerializer,
+        400: OpenApiResponse(description="organisation_id manquant/introuvable ou assignation déjà en attente."),
+        403: OpenApiResponse(description="Réservé au Super Admin."),
+        404: OpenApiResponse(description="Incident non trouvé."),
+    },
+    ),
 )
 class AssignIncidentToOrganisationView(APIView):
     """POST /incidents/<incident_id>/assign-to-organisation/ — super_admin uniquement."""
@@ -1733,14 +2349,29 @@ class AssignIncidentToOrganisationView(APIView):
         )
 
 
-@extend_schema(
+@extend_schema_view(
+    post=extend_schema(
     description=(
         "Accepter une assignation Super Admin (Admin de l'organisation cible, spec §3). "
         "Exige status='pending' et que le demandeur soit Admin de l'organisation "
         "assignée. Passe à 'accepted', fixe responded_at, et engage l'incident "
         "('declared' → 'taken_into_account', taken_by + taken_in_charge_at)."
     ),
-    responses={200: IncidentOrgAssignmentSerializer, 400: "État invalide", 403: "Pas Admin de cette org", 404: "Assignation non trouvée"},
+    tags=['Prise en charge & Collaboration'],
+    operation_id='incidents_org_assignment_accept',
+    summary="Accepter une assignation d'organisation",
+    parameters=[
+        OpenApiParameter('pk', OpenApiTypes.UUID, OpenApiParameter.PATH,
+                         description="Identifiant de l'IncidentOrgAssignment."),
+    ],
+    request=None,
+    responses={
+        200: IncidentOrgAssignmentSerializer,
+        400: OpenApiResponse(description="État invalide (doit être « en attente »)."),
+        403: OpenApiResponse(description="Vous n'êtes pas Admin de l'organisation assignée."),
+        404: OpenApiResponse(description="Assignation non trouvée."),
+    },
+    ),
 )
 class AcceptOrgAssignmentView(APIView):
     """POST /incident-org-assignments/<pk>/accept/ — org_admin de l'org cible."""
@@ -1779,15 +2410,35 @@ class AcceptOrgAssignmentView(APIView):
         )
 
 
-@extend_schema(
+@extend_schema_view(
+    post=extend_schema(
     description=(
         "Décliner une assignation Super Admin (Admin de l'organisation cible, spec §3). "
         "Body {\"motif\"/\"reason\"}. Exige status='pending' et que le demandeur soit "
         "Admin de l'organisation assignée. Passe à 'declined', stocke decline_reason, "
         "fixe responded_at."
     ),
-    request={'application/json': {'type': 'object', 'properties': {'motif': {'type': 'string'}, 'reason': {'type': 'string'}}}},
-    responses={200: IncidentOrgAssignmentSerializer, 400: "État invalide", 403: "Pas Admin de cette org", 404: "Assignation non trouvée"},
+    tags=['Prise en charge & Collaboration'],
+    operation_id='incidents_org_assignment_decline',
+    summary="Décliner une assignation d'organisation",
+    parameters=[
+        OpenApiParameter('pk', OpenApiTypes.UUID, OpenApiParameter.PATH,
+                         description="Identifiant de l'IncidentOrgAssignment."),
+    ],
+    request=inline_serializer(
+        name='IncidentOrgAssignmentDeclineRequest',
+        fields={
+            'motif': drf_serializers.CharField(required=False),
+            'reason': drf_serializers.CharField(required=False),
+        },
+    ),
+    responses={
+        200: IncidentOrgAssignmentSerializer,
+        400: OpenApiResponse(description="État invalide (doit être « en attente »)."),
+        403: OpenApiResponse(description="Vous n'êtes pas Admin de l'organisation assignée."),
+        404: OpenApiResponse(description="Assignation non trouvée."),
+    },
+    ),
 )
 class DeclineOrgAssignmentView(APIView):
     """POST /incident-org-assignments/<pk>/decline/ — org_admin de l'org cible."""
@@ -1826,6 +2477,23 @@ class DeclineOrgAssignmentView(APIView):
         )
 
 
+@extend_schema_view(
+    post=extend_schema(
+    tags=['Incidents'],
+    operation_id='incidents_bulk_delete',
+    summary="Suppression en masse (corbeille)",
+    description="Suppression logique de plusieurs incidents. Vérifie la propriété par "
+                "incident (Super Admin ou organisation propriétaire).",
+    request=inline_serializer(
+        name='IncidentBulkDeleteRequest',
+        fields={'incident_ids': drf_serializers.ListField(child=drf_serializers.UUIDField())},
+    ),
+    responses={
+        200: OpenApiResponse(description="{deleted_ids, unauthorized_ids, not_found_ids, message}."),
+        400: OpenApiResponse(description="incident_ids doit être une liste non vide."),
+    },
+    ),
+)
 class BulkDeleteIncidentsView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -1864,6 +2532,22 @@ class BulkDeleteIncidentsView(APIView):
         }, status=status.HTTP_200_OK)
 
 
+@extend_schema_view(
+    post=extend_schema(
+    tags=['Incidents'],
+    operation_id='incidents_bulk_restore',
+    summary="Restauration en masse (corbeille)",
+    description="Restaure plusieurs incidents supprimés (is_deleted=False). Super Admin uniquement.",
+    request=inline_serializer(
+        name='IncidentBulkRestoreRequest',
+        fields={'incident_ids': drf_serializers.ListField(child=drf_serializers.UUIDField())},
+    ),
+    responses={
+        200: OpenApiResponse(description="{restored_ids, not_found_ids, message}."),
+        400: OpenApiResponse(description="incident_ids doit être une liste non vide."),
+    },
+    ),
+)
 class BulkRestoreIncidentsView(APIView):
     permission_classes = [IsAuthenticated, IsSuperAdmin]
 
@@ -1893,6 +2577,23 @@ class BulkRestoreIncidentsView(APIView):
         }, status=status.HTTP_200_OK)
 
 
+@extend_schema_view(
+    post=extend_schema(
+    tags=['Incidents'],
+    operation_id='incidents_bulk_force_delete',
+    summary="Suppression définitive en masse",
+    description="Suppression DÉFINITIVE (hard-delete, irréversible) de plusieurs incidents "
+                "déjà en corbeille. Super Admin uniquement.",
+    request=inline_serializer(
+        name='IncidentBulkForceDeleteRequest',
+        fields={'incident_ids': drf_serializers.ListField(child=drf_serializers.UUIDField())},
+    ),
+    responses={
+        200: OpenApiResponse(description="{deleted_ids, not_found_ids, message}."),
+        400: OpenApiResponse(description="incident_ids doit être une liste non vide."),
+    },
+    ),
+)
 class BulkForceDeleteIncidentsView(APIView):
     permission_classes = [IsAuthenticated, IsSuperAdmin]
 
@@ -1921,9 +2622,14 @@ class BulkForceDeleteIncidentsView(APIView):
         }, status=status.HTTP_200_OK)
 
 
-@extend_schema(
-    description="Lister les incidents supprimés (corbeille). Super Admin uniquement.",
+@extend_schema_view(
+    get=extend_schema(
+    tags=['Incidents'],
+    operation_id='incidents_trash_list',
+    summary="Corbeille des incidents",
+    description="Liste les incidents supprimés (is_deleted=True). Super Admin uniquement.",
     responses={200: IncidentGetSerializer(many=True)},
+    ),
 )
 class TrashIncidentsView(generics.ListAPIView):
     """GET /incidents/trash/ — liste des incidents supprimés (is_deleted=True)."""
@@ -1934,9 +2640,22 @@ class TrashIncidentsView(generics.ListAPIView):
         return Incident.objects.filter(is_deleted=True).select_related('user_id', 'category_id').order_by('-created_at')
 
 
-@extend_schema(
-    description="Restaurer un incident supprimé (corbeille). Super Admin uniquement.",
-    responses={200: IncidentGetSerializer},
+@extend_schema_view(
+    post=extend_schema(
+    tags=['Incidents'],
+    operation_id='incidents_restore',
+    summary="Restaurer un incident",
+    description="Restaure un incident supprimé (is_deleted=False). Super Admin uniquement.",
+    parameters=[
+        OpenApiParameter('incident_id', OpenApiTypes.UUID, OpenApiParameter.PATH,
+                         description="Identifiant de l'incident."),
+    ],
+    request=None,
+    responses={
+        200: IncidentGetSerializer,
+        404: OpenApiResponse(description="Incident non trouvé dans la corbeille."),
+    },
+    ),
 )
 class RestoreIncidentView(APIView):
     """POST /incidents/<incident_id>/restore/ — restaurer un incident supprimé."""
@@ -1954,9 +2673,22 @@ class RestoreIncidentView(APIView):
         return Response(serializer.data, status=status.HTTP_200_OK)
 
 
-@extend_schema(
-    description="Récupérer l'analyse AI (Prediction) d'un incident.",
-    responses={200: PredictionSerializer, 404: "Pas de prédiction"},
+@extend_schema_view(
+    get=extend_schema(
+    tags=['Prédiction & IA'],
+    operation_id='predictions_incident_retrieve',
+    summary="Analyse IA d'un incident",
+    description="Récupère l'analyse IA (Prediction) d'un incident : statut et résultat. "
+                "Authentification requise.",
+    parameters=[
+        OpenApiParameter('incident_id', OpenApiTypes.UUID, OpenApiParameter.PATH,
+                         description="Identifiant de l'incident."),
+    ],
+    responses={
+        200: PredictionSerializer,
+        404: OpenApiResponse(description="Incident non trouvé ou aucune prédiction."),
+    },
+    ),
 )
 class IncidentPredictionView(APIView):
     """GET /MapApi/incidents/<incident_id>/prediction/ — état + résultat de l'analyse."""
@@ -1977,9 +2709,24 @@ class IncidentPredictionView(APIView):
         return Response(PredictionSerializer(prediction).data, status=status.HTTP_200_OK)
 
 
-@extend_schema(
-    description="Relancer l'analyse AI d'un incident (Super Admin uniquement).",
-    responses={202: PredictionSerializer, 404: "Incident non trouvé"},
+@extend_schema_view(
+    post=extend_schema(
+    tags=['Prédiction & IA'],
+    operation_id='predictions_incident_retry',
+    summary="Relancer l'analyse IA",
+    description="Relance la tâche Celery d'analyse IA d'un incident (remet la Prediction "
+                "à `pending`). Super Admin uniquement ; nécessite une photo.",
+    parameters=[
+        OpenApiParameter('incident_id', OpenApiTypes.UUID, OpenApiParameter.PATH,
+                         description="Identifiant de l'incident."),
+    ],
+    request=None,
+    responses={
+        202: PredictionSerializer,
+        400: OpenApiResponse(description="L'incident n'a pas de photo."),
+        404: OpenApiResponse(description="Incident non trouvé."),
+    },
+    ),
 )
 class RetryIncidentPredictionView(APIView):
     """POST /MapApi/incidents/<incident_id>/prediction/retry/ — relance la task Celery."""
@@ -2009,11 +2756,43 @@ class RetryIncidentPredictionView(APIView):
         return Response(PredictionSerializer(prediction).data, status=status.HTTP_202_ACCEPTED)
 
 
-@extend_schema(
-    description=(
-        "Chat LLM par incident. GET: récupère l'historique. "
-        "POST: envoie une question, le serveur appelle le model-deploy /chat "
-        "avec le contexte de la Prediction et stocke les deux messages (user, assistant)."
+@extend_schema_view(
+    get=extend_schema(
+        tags=['Prédiction & IA'],
+        operation_id='incident_chat_history',
+        summary="Historique du chat IA d'un incident",
+        description="Récupère l'historique des messages (user/assistant) du chat IA de "
+                    "l'incident. Authentification requise.",
+        parameters=[
+            OpenApiParameter('incident_id', OpenApiTypes.UUID, OpenApiParameter.PATH,
+                             description="Identifiant de l'incident."),
+        ],
+        responses={
+            200: OpenApiResponse(description="{history:[{role,content,created_at,user_id}]}."),
+            404: OpenApiResponse(description="Incident non trouvé."),
+        },
+    ),
+    post=extend_schema(
+        tags=['Prédiction & IA'],
+        operation_id='incident_chat_send',
+        summary="Envoyer un message au chat IA",
+        description="Envoie une question : le serveur appelle le service model-deploy `/chat` "
+                    "avec le contexte de la Prediction, puis stocke les messages user et "
+                    "assistant. Authentification requise.",
+        parameters=[
+            OpenApiParameter('incident_id', OpenApiTypes.UUID, OpenApiParameter.PATH,
+                             description="Identifiant de l'incident."),
+        ],
+        request=inline_serializer(
+            name='IncidentChatSendRequest',
+            fields={'message': drf_serializers.CharField()},
+        ),
+        responses={
+            200: OpenApiResponse(description="{message, history}."),
+            400: OpenApiResponse(description="message manquant ou prédiction absente/incomplète."),
+            404: OpenApiResponse(description="Incident non trouvé."),
+            502: OpenApiResponse(description="Erreur du service de chat IA."),
+        },
     ),
 )
 class IncidentChatView(APIView):
@@ -2117,10 +2896,26 @@ class IncidentChatView(APIView):
         )
 
 
-@extend_schema(
-    description="Connexion d'un agent de terrain via téléphone + PIN 4 chiffres.",
-    request={'application/json': {'type': 'object', 'properties': {'phone': {'type': 'string'}, 'pin': {'type': 'string'}}}},
-    responses={200: 'Tokens JWT + must_change_pin flag'},
+@extend_schema_view(
+    post=extend_schema(
+    tags=['Authentification'],
+    operation_id='agent_pin_login',
+    summary="Connexion agent (téléphone + PIN)",
+    description="Connexion d'un agent de terrain via téléphone + PIN 4 chiffres. Retourne "
+                "des tokens JWT et `must_change_pin`. Public.",
+    request=inline_serializer(
+        name='AgentPinLoginRequest',
+        fields={
+            'phone': drf_serializers.CharField(),
+            'pin': drf_serializers.CharField(),
+        },
+    ),
+    responses={
+        200: OpenApiResponse(description="Tokens JWT + user{... must_change_pin}."),
+        400: OpenApiResponse(description="phone/pin manquant ou aucun PIN configuré."),
+        401: OpenApiResponse(description="Téléphone ou PIN invalide."),
+    },
+    ),
 )
 class AgentPinLoginView(APIView):
     """POST /agent-pin-login/ — login par téléphone + PIN, retourne tokens JWT."""
@@ -2176,10 +2971,27 @@ class AgentPinLoginView(APIView):
         )
 
 
-@extend_schema(
-    description="Changer le PIN de l'agent connecté. Requiert l'ancien PIN.",
-    request={'application/json': {'type': 'object', 'properties': {'old_pin': {'type': 'string'}, 'new_pin': {'type': 'string'}}}},
-    responses={200: 'PIN changé avec succès'},
+@extend_schema_view(
+    post=extend_schema(
+    tags=['Authentification'],
+    operation_id='agent_change_pin',
+    summary="Changer son PIN (agent)",
+    description="Change le PIN de l'agent de terrain connecté. Requiert l'ancien PIN ; le "
+                "nouveau doit faire 4 chiffres et ne pas être trivial.",
+    request=inline_serializer(
+        name='AgentChangePinRequest',
+        fields={
+            'old_pin': drf_serializers.CharField(),
+            'new_pin': drf_serializers.CharField(),
+        },
+    ),
+    responses={
+        200: OpenApiResponse(description="PIN changé avec succès."),
+        400: OpenApiResponse(description="Champs manquants, aucun PIN configuré ou nouveau PIN invalide/trivial."),
+        401: OpenApiResponse(description="Ancien PIN invalide."),
+        403: OpenApiResponse(description="Réservé aux agents de terrain."),
+    },
+    ),
 )
 class AgentChangePinView(APIView):
     """POST /agent/change-pin/ — changer son PIN (authentifié)."""

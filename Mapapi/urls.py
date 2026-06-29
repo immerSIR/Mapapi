@@ -51,6 +51,7 @@ from rest_framework_simplejwt.views import (
     TokenVerifyView,
 )
 from drf_spectacular.views import SpectacularAPIView, SpectacularRedocView, SpectacularSwaggerView
+from . import schema  # noqa: F401 — enregistre les extensions drf-spectacular (sécurité Bearer/cookie)
 from .views import PasswordResetView
 from .views.auth_cookie import (
     CookieTokenObtainPairView, CookieTokenRefreshView, CookieLogoutView,

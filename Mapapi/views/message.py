@@ -11,16 +11,54 @@ from rest_framework.pagination import PageNumberPagination
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
-from drf_spectacular.utils import extend_schema
+from drf_spectacular.utils import (
+    extend_schema,
+    extend_schema_view,
+    OpenApiParameter,
+    OpenApiResponse,
+    OpenApiExample,
+)
+from drf_spectacular.types import OpenApiTypes
 
 from ..serializer import *
 from ..models import Collaboration, Incident, COLLAB_ROLE_LEADER
 from .common import CustomPageNumberPagination
 
 
-@extend_schema(
-    description="Endpoint allowing retrival, updating and deletion of Message.",
-    responses={200: MessageSerializer, 404: "message not found"},  
+@extend_schema_view(
+    get=extend_schema(
+        tags=['Messages & Communauté'],
+        operation_id='messages_retrieve',
+        summary="Détail d'un message",
+        description="Retourne un message (objet, contenu, zone, communauté, élu destinataire) par son identifiant. Endpoint public.",
+        parameters=[OpenApiParameter('id', OpenApiTypes.UUID, OpenApiParameter.PATH, description="Identifiant UUID du message.")],
+        responses={200: MessageGetSerializer, 404: OpenApiResponse(description="Message introuvable.")},
+    ),
+    put=extend_schema(
+        tags=['Messages & Communauté'],
+        operation_id='messages_update',
+        summary="Modifier un message",
+        description="Met à jour un message existant. Endpoint public.",
+        parameters=[OpenApiParameter('id', OpenApiTypes.UUID, OpenApiParameter.PATH, description="Identifiant UUID du message.")],
+        request=MessageSerializer,
+        responses={
+            200: MessageSerializer,
+            400: OpenApiResponse(description="Données invalides."),
+            404: OpenApiResponse(description="Message introuvable."),
+        },
+    ),
+    delete=extend_schema(
+        tags=['Messages & Communauté'],
+        operation_id='messages_destroy',
+        summary="Supprimer un message",
+        description="Supprime définitivement un message. Endpoint public.",
+        parameters=[OpenApiParameter('id', OpenApiTypes.UUID, OpenApiParameter.PATH, description="Identifiant UUID du message.")],
+        responses={
+            204: OpenApiResponse(description="Message supprimé."),
+            404: OpenApiResponse(description="Message introuvable."),
+        },
+    ),
+    post=extend_schema(exclude=True),
 )
 class MessageAPIView(generics.CreateAPIView):
     permission_classes = (
@@ -55,9 +93,38 @@ class MessageAPIView(generics.CreateAPIView):
         item.delete()
         return Response(status=204)
 
-@extend_schema(
-    description="Endpoint allowing retrieval and creating of message.",
-    responses={201: MessageSerializer, 400: "serializer error"},  
+@extend_schema_view(
+    get=extend_schema(
+        tags=['Messages & Communauté'],
+        operation_id='messages_list',
+        summary="Lister les messages",
+        description="Retourne la liste paginée de tous les messages (questions adressées aux élus), triés par identifiant. Endpoint public.",
+        responses={200: MessageGetSerializer(many=True)},
+    ),
+    post=extend_schema(
+        tags=['Messages & Communauté'],
+        operation_id='messages_create',
+        summary="Créer un message",
+        description="Crée un nouveau message. Si `user_id` (élu destinataire) est fourni, un e-mail de notification lui est envoyé. Endpoint public.",
+        request=MessageSerializer,
+        responses={
+            201: MessageSerializer,
+            400: OpenApiResponse(description="Données invalides."),
+        },
+        examples=[
+            OpenApiExample(
+                'Message à un élu',
+                value={
+                    'objet': 'Problème de salubrité',
+                    'message': "Les déchets ne sont pas ramassés depuis deux semaines.",
+                    'zone': '3fa85f64-5717-4562-b3fc-2c963f66afa6',
+                    'communaute': '3fa85f64-5717-4562-b3fc-2c963f66afa6',
+                    'user_id': '3fa85f64-5717-4562-b3fc-2c963f66afa6',
+                },
+                request_only=True,
+            ),
+        ],
+    ),
 )
 class MessageAPIListView(generics.CreateAPIView):
     permission_classes = (
@@ -90,9 +157,18 @@ class MessageAPIListView(generics.CreateAPIView):
             return Response(serializer.data, status=201)
         return Response(serializer.errors, status=400)
 
-@extend_schema(
-    description="Endpoint allowing retrivial of message by community.",
-    responses={200: MessageSerializer, 404: "message not found"},  
+@extend_schema_view(
+    get=extend_schema(
+        tags=['Messages & Communauté'],
+        operation_id='messages_by_communaute',
+        summary="Messages d'une communauté",
+        description="Retourne les messages rattachés à une communauté. Endpoint public. Note : cette route partage le chemin `/message/` et est masquée à l'exécution par la liste des messages.",
+        responses={
+            200: MessageSerializer(many=True),
+            404: OpenApiResponse(description="Aucun message."),
+        },
+    ),
+    post=extend_schema(exclude=True),
 )
 class MessageByComAPIView(generics.CreateAPIView):
     permission_classes = (
@@ -108,9 +184,19 @@ class MessageByComAPIView(generics.CreateAPIView):
         except Message.DoesNotExist:
             return Response(status=404)
 
-@extend_schema(
-    description="Endpoint allowing retrivial of message by zone.",
-    responses={200: MessageSerializer, 404: "message not found"},  
+@extend_schema_view(
+    get=extend_schema(
+        tags=['Messages & Communauté'],
+        operation_id='messages_by_zone',
+        summary="Messages par zone",
+        description="Retourne les messages d'une zone, filtrés par le nom de la zone (`zone__name`). Endpoint public.",
+        parameters=[OpenApiParameter('zone', OpenApiTypes.STR, OpenApiParameter.PATH, description="Nom de la zone.")],
+        responses={
+            200: MessageByZoneSerializer(many=True),
+            404: OpenApiResponse(description="Aucun message."),
+        },
+    ),
+    post=extend_schema(exclude=True),
 )
 class MessageByZoneAPIView(generics.CreateAPIView):
     permission_classes = (
@@ -128,10 +214,40 @@ class MessageByZoneAPIView(generics.CreateAPIView):
             return Response(status=404)
 
 
-@extend_schema(
-    description="Endpoint for managing response messages.",
-    request=ResponseMessageSerializer,
-    responses={201: ResponseMessageSerializer, 400: "Bad Request"},
+@extend_schema_view(
+    get=extend_schema(
+        tags=['Messages & Communauté'],
+        operation_id='response_msg_retrieve',
+        summary="Détail d'une réponse",
+        description="Retourne une réponse à un message (réponse d'un élu) par son identifiant. Endpoint public.",
+        parameters=[OpenApiParameter('id', OpenApiTypes.UUID, OpenApiParameter.PATH, description="Identifiant UUID de la réponse.")],
+        responses={200: ResponseMessageSerializer, 404: OpenApiResponse(description="Réponse introuvable.")},
+    ),
+    put=extend_schema(
+        tags=['Messages & Communauté'],
+        operation_id='response_msg_update',
+        summary="Modifier une réponse",
+        description="Met à jour une réponse existante. Endpoint public.",
+        parameters=[OpenApiParameter('id', OpenApiTypes.UUID, OpenApiParameter.PATH, description="Identifiant UUID de la réponse.")],
+        request=ResponseMessageSerializer,
+        responses={
+            200: ResponseMessageSerializer,
+            400: OpenApiResponse(description="Données invalides."),
+            404: OpenApiResponse(description="Réponse introuvable."),
+        },
+    ),
+    delete=extend_schema(
+        tags=['Messages & Communauté'],
+        operation_id='response_msg_destroy',
+        summary="Supprimer une réponse",
+        description="Supprime définitivement une réponse. Endpoint public.",
+        parameters=[OpenApiParameter('id', OpenApiTypes.UUID, OpenApiParameter.PATH, description="Identifiant UUID de la réponse.")],
+        responses={
+            204: OpenApiResponse(description="Réponse supprimée."),
+            404: OpenApiResponse(description="Réponse introuvable."),
+        },
+    ),
+    post=extend_schema(exclude=True),
 )
 class ResponseMessageAPIView(generics.CreateAPIView):
     permission_classes = (
@@ -166,10 +282,25 @@ class ResponseMessageAPIView(generics.CreateAPIView):
         item.delete()
         return Response(status=204)
 
-@extend_schema(
-    description="Endpoint for managing response messages.",
-    request=ResponseMessageSerializer,
-    responses={201: ResponseMessageSerializer, 400: "Bad Request"},
+@extend_schema_view(
+    get=extend_schema(
+        tags=['Messages & Communauté'],
+        operation_id='response_msg_list',
+        summary="Lister les réponses",
+        description="Retourne la liste paginée de toutes les réponses aux messages, triées par identifiant. Endpoint public.",
+        responses={200: ResponseMessageSerializer(many=True)},
+    ),
+    post=extend_schema(
+        tags=['Messages & Communauté'],
+        operation_id='response_msg_create',
+        summary="Créer une réponse",
+        description="Crée une réponse à un message. Endpoint public.",
+        request=ResponseMessageSerializer,
+        responses={
+            201: ResponseMessageSerializer,
+            400: OpenApiResponse(description="Données invalides."),
+        },
+    ),
 )
 class ResponseMessageAPIListView(generics.CreateAPIView):
     permission_classes = (
@@ -209,9 +340,19 @@ class ResponseByMessageAPIView(generics.CreateAPIView):
         except ResponseMessage.DoesNotExist:
             return Response(status=404)
 
-@extend_schema(
-    description="Endpoint for retrieving messages by user ID.",
-    responses={200: MessageGetSerializer(many=True), 404: "Not Found"},
+@extend_schema_view(
+    get=extend_schema(
+        tags=['Messages & Communauté'],
+        operation_id='messages_by_user',
+        summary="Messages d'un élu",
+        description="Retourne les messages adressés à un utilisateur (élu) donné. Endpoint public.",
+        parameters=[OpenApiParameter('id', OpenApiTypes.UUID, OpenApiParameter.PATH, description="Identifiant UUID de l'utilisateur (élu).")],
+        responses={
+            200: MessageGetSerializer(many=True),
+            404: OpenApiResponse(description="Aucun message."),
+        },
+    ),
+    post=extend_schema(exclude=True),
 )
 class MessageByUserAPIView(generics.CreateAPIView):
     permission_classes = (
@@ -228,6 +369,34 @@ class MessageByUserAPIView(generics.CreateAPIView):
             return Response(status=404)
 
 
+@extend_schema_view(
+    get=extend_schema(
+        tags=['Messages & Communauté'],
+        operation_id='messages_discussion_list',
+        summary="Discussion d'un incident",
+        description="Retourne tous les messages du chat de groupe d'un incident, triés par date. Réservé aux collaborateurs acceptés (et au leader) ; en mode interne, réservé aux membres de l'organisation propriétaire.",
+        parameters=[OpenApiParameter('incident_id', OpenApiTypes.UUID, OpenApiParameter.PATH, description="Identifiant UUID de l'incident.")],
+        responses={
+            200: DiscussionMessageSerializer(many=True),
+            401: OpenApiResponse(description="Authentification requise."),
+            404: OpenApiResponse(description="Incident introuvable ou accès non autorisé."),
+        },
+    ),
+    post=extend_schema(
+        tags=['Messages & Communauté'],
+        operation_id='messages_discussion_create',
+        summary="Envoyer un message de discussion",
+        description="Publie un message dans le chat de groupe d'un incident (texte, audio et/ou pièce jointe en multipart). Réservé aux collaborateurs acceptés ; bloqué si l'incident est résolu. `recipient` est optionnel.",
+        parameters=[OpenApiParameter('incident_id', OpenApiTypes.UUID, OpenApiParameter.PATH, description="Identifiant UUID de l'incident.")],
+        request=DiscussionMessageSerializer,
+        responses={
+            201: DiscussionMessageSerializer,
+            400: OpenApiResponse(description="Message vide ou incident résolu."),
+            401: OpenApiResponse(description="Authentification requise."),
+            404: OpenApiResponse(description="Incident introuvable ou accès non autorisé."),
+        },
+    ),
+)
 class DiscussionMessageView(generics.ListCreateAPIView):
     """
     Espace de discussion (chat de groupe) d'un incident.

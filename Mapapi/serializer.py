@@ -8,6 +8,8 @@ from django.contrib.auth import authenticate
 from rest_framework.serializers import ModelSerializer
 from django.contrib.auth.hashers import make_password
 from django.utils import timezone
+from drf_spectacular.utils import extend_schema_field
+from drf_spectacular.types import OpenApiTypes
 
 
 class OrganisationSerializer(serializers.ModelSerializer):
@@ -17,7 +19,7 @@ class OrganisationSerializer(serializers.ModelSerializer):
         model = Organisation
         fields = '__all__'
 
-    def get_members_count(self, obj):
+    def get_members_count(self, obj) -> int:
         return obj.members.count()
 
 
@@ -38,7 +40,7 @@ class OrganisationMemberSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ('id', 'email', 'date_joined', 'agent_code')
 
-    def get_web_role(self, obj):
+    def get_web_role(self, obj) -> str | None:
         from .roles import get_web_role
         return get_web_role(obj)
 
@@ -91,7 +93,7 @@ class UserSerializer(ModelSerializer):
         # n'est jamais renvoyé.
         extra_kwargs = PASSWORD_WRITE_ONLY
 
-    def get_web_role(self, obj):
+    def get_web_role(self, obj) -> str | None:
         from .roles import get_web_role
         return get_web_role(obj)
 
@@ -172,16 +174,18 @@ class IncidentActingOrgsMixin(serializers.Serializer):
     taken_by_name = serializers.SerializerMethodField(read_only=True)
     acting_organisations = serializers.SerializerMethodField(read_only=True)
 
+    @extend_schema_field(OpenApiTypes.OBJECT)
     def get_taken_by_organisation(self, obj):
         from .services.incident_orgs import taken_by_organisation
         return taken_by_organisation(obj)
 
-    def get_taken_by_name(self, obj):
+    def get_taken_by_name(self, obj) -> str | None:
         tb = getattr(obj, 'taken_by', None)
         if not tb:
             return None
         return f"{tb.first_name or ''} {tb.last_name or ''}".strip() or tb.email
 
+    @extend_schema_field(serializers.ListField(child=serializers.DictField()))
     def get_acting_organisations(self, obj):
         from .services.incident_orgs import acting_organisations
         return acting_organisations(obj)
@@ -313,6 +317,7 @@ class IncidentReportSerializer(ModelSerializer):
             'file', 'created_at', 'incident', 'author',
         )
 
+    @extend_schema_field(OpenApiTypes.OBJECT)
     def get_author(self, obj):
         return _person_brief(obj.user_id)
 
@@ -470,9 +475,11 @@ class CollaborationPartiesMixin(serializers.Serializer):
     sender = serializers.SerializerMethodField(read_only=True)
     receiver = serializers.SerializerMethodField(read_only=True)
 
+    @extend_schema_field(OpenApiTypes.OBJECT)
     def get_sender(self, obj):
         return _person_brief(getattr(obj, 'user', None))
 
+    @extend_schema_field(OpenApiTypes.OBJECT)
     def get_receiver(self, obj):
         incident = getattr(obj, 'incident', None)
         return _person_brief(getattr(incident, 'taken_by', None)) if incident else None
@@ -501,7 +508,7 @@ class CollaborationSerializer(CollaborationPartiesMixin, ModelSerializer):
         #   une demande manuelle ne peut proposer que contributor/observer
         read_only_fields = ('status',)
 
-    def get_user_full_name(self, obj):
+    def get_user_full_name(self, obj) -> str | None:
         if obj.user:
             return f"{obj.user.first_name or ''} {obj.user.last_name or ''}".strip() or obj.user.email
         return None
@@ -556,12 +563,12 @@ class CollaborationEnrichedSerializer(CollaborationPartiesMixin, ModelSerializer
             'participants_count', 'motivation',
         ]
 
-    def get_organisation_name(self, obj):
+    def get_organisation_name(self, obj) -> str | None:
         if obj.user and obj.user.organisation_member:
             return obj.user.organisation_member.name
         return obj.user.organisation if obj.user else None
 
-    def get_participants_count(self, obj):
+    def get_participants_count(self, obj) -> int:
         return Collaboration.objects.filter(
             incident=obj.incident, status='accepted'
         ).count()
@@ -605,6 +612,7 @@ class IncidentAssignmentSerializer(serializers.ModelSerializer):
         fields = '__all__'
         read_only_fields = ('assigned_by', 'created_at', 'updated_at')
 
+    @extend_schema_field(IncidentGetSerializer)
     def get_incident_detail(self, obj):
         if not obj.incident:
             return None
@@ -790,13 +798,13 @@ class PartnerSuggestionSerializer(serializers.ModelSerializer):
             'suggested_partner': {'required': False},
         }
 
-    def get_suggested_by_name(self, obj):
+    def get_suggested_by_name(self, obj) -> str | None:
         u = obj.suggested_by
         if not u:
             return None
         return f"{u.first_name or ''} {u.last_name or ''}".strip() or u.email
 
-    def get_suggested_partner_name(self, obj):
+    def get_suggested_partner_name(self, obj) -> str | None:
         u = obj.suggested_partner
         if not u:
             return None

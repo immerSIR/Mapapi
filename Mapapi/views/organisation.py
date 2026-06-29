@@ -8,12 +8,20 @@ from django.db.models import Count
 
 logger = logging.getLogger(__name__)
 
-from rest_framework import status, generics, permissions
+from rest_framework import status, generics, permissions, serializers
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 from rest_framework.response import Response
 
-from drf_spectacular.utils import extend_schema
+from drf_spectacular.utils import (
+    extend_schema,
+    extend_schema_view,
+    OpenApiParameter,
+    OpenApiResponse,
+    OpenApiExample,
+    inline_serializer,
+)
+from drf_spectacular.types import OpenApiTypes
 
 from ..models import Organisation, User, Incident, ORG_ROLE_ADMIN, ORG_ROLE_BUREAU, ORG_ROLE_FIELD
 from ..serializer import OrganisationSerializer, OrganisationMemberSerializer
@@ -34,6 +42,83 @@ def _active_admin_count(org, exclude_user_id=None):
     return qs.count()
 
 
+@extend_schema_view(
+    list=extend_schema(
+        tags=['Organisations & Membres'],
+        operation_id='organisations_list',
+        summary="Lister les organisations",
+        description="Renvoie la liste paginée des organisations. Accès public (aucune authentification requise).",
+        parameters=[
+            OpenApiParameter('page', OpenApiTypes.INT, OpenApiParameter.QUERY, description="Numéro de page."),
+            OpenApiParameter('page_size', OpenApiTypes.INT, OpenApiParameter.QUERY, description="Taille de page (max 1000, défaut 100)."),
+        ],
+        responses={200: OrganisationSerializer(many=True)},
+    ),
+    create=extend_schema(
+        tags=['Organisations & Membres'],
+        operation_id='organisations_create',
+        summary="Créer une organisation",
+        description="Crée une organisation. Réservé au Super Admin (authentification requise).",
+        request=OrganisationSerializer,
+        responses={
+            201: OrganisationSerializer,
+            400: OpenApiResponse(description="Données invalides."),
+            401: OpenApiResponse(description="Authentification requise."),
+            403: OpenApiResponse(description="Réservé au Super Admin."),
+        },
+    ),
+    retrieve=extend_schema(
+        tags=['Organisations & Membres'],
+        operation_id='organisations_retrieve',
+        summary="Détail d'une organisation",
+        description="Renvoie une organisation par son identifiant. Accès public.",
+        parameters=[OpenApiParameter('pk', OpenApiTypes.UUID, OpenApiParameter.PATH, description="Identifiant de l'organisation.")],
+        responses={200: OrganisationSerializer, 404: OpenApiResponse(description="Organisation non trouvée.")},
+    ),
+    update=extend_schema(
+        tags=['Organisations & Membres'],
+        operation_id='organisations_update',
+        summary="Modifier une organisation (complet)",
+        description="Met à jour le profil d'une organisation. Réservé au Super Admin ou à l'Admin de CETTE organisation.",
+        parameters=[OpenApiParameter('pk', OpenApiTypes.UUID, OpenApiParameter.PATH, description="Identifiant de l'organisation.")],
+        request=OrganisationSerializer,
+        responses={
+            200: OrganisationSerializer,
+            400: OpenApiResponse(description="Données invalides."),
+            401: OpenApiResponse(description="Authentification requise."),
+            403: OpenApiResponse(description="Seul un administrateur de cette organisation (ou Super Admin) peut modifier son profil."),
+            404: OpenApiResponse(description="Organisation non trouvée."),
+        },
+    ),
+    partial_update=extend_schema(
+        tags=['Organisations & Membres'],
+        operation_id='organisations_partial_update',
+        summary="Modifier une organisation (partiel)",
+        description="Met à jour partiellement le profil d'une organisation. Réservé au Super Admin ou à l'Admin de CETTE organisation.",
+        parameters=[OpenApiParameter('pk', OpenApiTypes.UUID, OpenApiParameter.PATH, description="Identifiant de l'organisation.")],
+        request=OrganisationSerializer,
+        responses={
+            200: OrganisationSerializer,
+            400: OpenApiResponse(description="Données invalides."),
+            401: OpenApiResponse(description="Authentification requise."),
+            403: OpenApiResponse(description="Seul un administrateur de cette organisation (ou Super Admin) peut modifier son profil."),
+            404: OpenApiResponse(description="Organisation non trouvée."),
+        },
+    ),
+    destroy=extend_schema(
+        tags=['Organisations & Membres'],
+        operation_id='organisations_destroy',
+        summary="Supprimer une organisation",
+        description="Supprime une organisation. Réservé au Super Admin (authentification requise).",
+        parameters=[OpenApiParameter('pk', OpenApiTypes.UUID, OpenApiParameter.PATH, description="Identifiant de l'organisation.")],
+        responses={
+            204: OpenApiResponse(description="Organisation supprimée."),
+            401: OpenApiResponse(description="Authentification requise."),
+            403: OpenApiResponse(description="Réservé au Super Admin."),
+            404: OpenApiResponse(description="Organisation non trouvée."),
+        },
+    ),
+)
 class OrganisationViewSet(generics.ListCreateAPIView, generics.RetrieveUpdateDestroyAPIView):
     queryset = Organisation.objects.all()
     serializer_class = OrganisationSerializer
@@ -71,10 +156,24 @@ class OrganisationViewSet(generics.ListCreateAPIView, generics.RetrieveUpdateDes
         return super().update(request, *args, **kwargs)
 
 
-@extend_schema(
-    description="Détail enrichi d'une organisation avec statistiques (membres, incidents, etc.).",
-    responses={200: OrganisationSerializer},
-)
+@extend_schema_view(get=extend_schema(
+    tags=['Organisations & Membres'],
+    operation_id='organisations_detail_enriched',
+    summary="Détail enrichi d'une organisation",
+    description=(
+        "Renvoie l'organisation enrichie d'un objet `stats`. Accès public. "
+        "`stats` contient : member_count, field_agents_count, bureau_agents_count, "
+        "admins_count, incident_count, resolved_incident_count."
+    ),
+    parameters=[OpenApiParameter('pk', OpenApiTypes.UUID, OpenApiParameter.PATH, description="Identifiant de l'organisation.")],
+    responses={
+        200: OpenApiResponse(
+            response=OrganisationSerializer,
+            description="Organisation + objet `stats` (compteurs membres/incidents).",
+        ),
+        404: OpenApiResponse(description="Organisation non trouvée."),
+    },
+))
 class OrganisationDetailView(APIView):
     """GET /organisations/<int:pk>/detail/ — détail enrichi avec stats."""
     permission_classes = []
@@ -116,6 +215,31 @@ class OrganisationDetailView(APIView):
         return Response(data, status=status.HTTP_200_OK)
 
 
+@extend_schema_view(get=extend_schema(
+    tags=['Organisations & Membres'],
+    operation_id='organisations_tenant_config',
+    summary="Configuration de tenant (thème par sous-domaine)",
+    description=(
+        "Renvoie la configuration de thème de l'organisation résolue à partir du "
+        "sous-domaine de la requête. Accès public. 404 si aucune organisation ne "
+        "correspond au sous-domaine."
+    ),
+    responses={
+        200: inline_serializer(
+            name='TenantConfigResponse',
+            fields={
+                'name': serializers.CharField(),
+                'subdomain': serializers.CharField(),
+                'logo_url': serializers.CharField(allow_null=True),
+                'primary_color': serializers.CharField(allow_null=True),
+                'secondary_color': serializers.CharField(allow_null=True),
+                'background_color': serializers.CharField(allow_null=True),
+                'is_premium': serializers.BooleanField(),
+            },
+        ),
+        404: OpenApiResponse(description="Organisation introuvable pour ce sous-domaine."),
+    },
+))
 class TenantConfigView(APIView):
     permission_classes = []
 
@@ -141,10 +265,21 @@ class TenantConfigView(APIView):
         return Response(data)
 
 
-@extend_schema(
-    description="Liste les membres d'une organisation. Réservé aux admins et agents de bureau de l'org.",
-    responses={200: OrganisationMemberSerializer(many=True)},
-)
+@extend_schema_view(list=extend_schema(
+    tags=['Organisations & Membres'],
+    operation_id='organisations_members_list',
+    summary="Lister les membres d'une organisation",
+    description=(
+        "Liste les membres d'une organisation. Authentification requise ; réservé "
+        "au staff (is_staff) ou aux org_admin / bureau_agent de CETTE organisation."
+    ),
+    parameters=[OpenApiParameter('pk', OpenApiTypes.UUID, OpenApiParameter.PATH, description="Identifiant de l'organisation.")],
+    responses={
+        200: OrganisationMemberSerializer(many=True),
+        401: OpenApiResponse(description="Authentification requise."),
+        403: OpenApiResponse(description="Droits insuffisants pour voir les membres de cette organisation."),
+    },
+))
 class OrganisationMemberListView(generics.ListAPIView):
     """GET /organisations/<pk>/members/ — liste des membres de l'organisation."""
     serializer_class = OrganisationMemberSerializer
@@ -169,11 +304,47 @@ class OrganisationMemberListView(generics.ListAPIView):
         return super().list(request, *args, **kwargs)
 
 
-@extend_schema(
-    description="Ajouter un membre à une organisation. Génère un agent_code si le rôle est field_agent.",
-    request=OrganisationMemberSerializer,
-    responses={201: OrganisationMemberSerializer},
-)
+@extend_schema_view(post=extend_schema(
+    tags=['Organisations & Membres'],
+    operation_id='organisations_members_add',
+    summary="Ajouter un membre à une organisation",
+    description=(
+        "Affecte un utilisateur EXISTANT (`user_id`) à l'organisation avec le rôle "
+        "`org_role`. Authentification requise ; réservé au Super Admin ou à l'Admin "
+        "de CETTE organisation. Si le rôle est `field_agent` : génère `agent_code`, "
+        "un `pin_code` initial (renvoyé une seule fois dans `initial_pin`) et envoie "
+        "un email avec les identifiants."
+    ),
+    parameters=[OpenApiParameter('pk', OpenApiTypes.UUID, OpenApiParameter.PATH, description="Identifiant de l'organisation.")],
+    request=inline_serializer(
+        name='OrganisationMemberAddRequest',
+        fields={
+            'user_id': serializers.UUIDField(),
+            'org_role': serializers.ChoiceField(choices=[ORG_ROLE_ADMIN, ORG_ROLE_BUREAU, ORG_ROLE_FIELD]),
+        },
+    ),
+    examples=[
+        OpenApiExample(
+            'Ajout agent de terrain',
+            value={'user_id': '00000000-0000-0000-0000-000000000000', 'org_role': 'field_agent'},
+            request_only=True,
+        ),
+    ],
+    responses={
+        201: OpenApiResponse(
+            response=OrganisationMemberSerializer,
+            description=(
+                "Membre affecté. Pour un `field_agent` nouvellement doté d'un PIN, la "
+                "réponse ajoute `initial_pin` (PIN en clair, une seule fois), "
+                "`must_change_pin` (bool) et `email_sent` (bool ; `email_error` si l'envoi a échoué)."
+            ),
+        ),
+        400: OpenApiResponse(description="user_id et org_role requis, ou rôle invalide."),
+        401: OpenApiResponse(description="Authentification requise."),
+        403: OpenApiResponse(description="Seul un administrateur d'organisation peut gérer les membres."),
+        404: OpenApiResponse(description="Organisation ou utilisateur non trouvé."),
+    },
+))
 class OrganisationMemberCreateView(APIView):
     """POST /organisations/<pk>/members/ — ajouter un membre."""
     permission_classes = [IsAuthenticated]
@@ -267,26 +438,53 @@ class OrganisationMemberCreateView(APIView):
         return Response(response_data, status=status.HTTP_201_CREATED)
 
 
-@extend_schema(
+@extend_schema_view(post=extend_schema(
+    tags=['Organisations & Membres'],
+    operation_id='organisations_agents_create',
+    summary="Créer un agent de terrain (tout-en-un)",
     description=(
-        "Endpoint tout-en-un : crée un utilisateur ET l'affecte comme agent de terrain "
-        "dans l'organisation. Génère agent_code + PIN initial + envoie email automatiquement."
+        "Crée un utilisateur ET l'affecte comme agent de terrain (`field_agent`) de "
+        "l'organisation en un seul appel : génère `agent_code` + `pin_code` initial "
+        "et envoie l'email d'identifiants. Authentification requise ; réservé au "
+        "Super Admin ou à l'Admin de CETTE organisation."
     ),
-    request={
-        'application/json': {
-            'type': 'object',
-            'required': ['first_name', 'last_name', 'email', 'phone'],
-            'properties': {
-                'first_name': {'type': 'string'},
-                'last_name': {'type': 'string'},
-                'email': {'type': 'string', 'format': 'email'},
-                'phone': {'type': 'string', 'example': '+221771234567'},
-                'address': {'type': 'string'},
+    parameters=[OpenApiParameter('pk', OpenApiTypes.UUID, OpenApiParameter.PATH, description="Identifiant de l'organisation.")],
+    request=inline_serializer(
+        name='FieldAgentCreateRequest',
+        fields={
+            'first_name': serializers.CharField(),
+            'last_name': serializers.CharField(),
+            'email': serializers.EmailField(),
+            'phone': serializers.CharField(),
+            'address': serializers.CharField(required=False),
+        },
+    ),
+    examples=[
+        OpenApiExample(
+            'Création agent de terrain',
+            value={
+                'first_name': 'Awa', 'last_name': 'Diallo',
+                'email': 'awa.diallo@example.com', 'phone': '+221771234567',
+                'address': 'Dakar',
             },
-        }
+            request_only=True,
+        ),
+    ],
+    responses={
+        201: OpenApiResponse(
+            response=OrganisationMemberSerializer,
+            description=(
+                "Agent créé. La réponse ajoute toujours `initial_pin` (PIN en clair, "
+                "une seule fois), `must_change_pin` (bool) et `email_sent` (bool ; "
+                "`email_error` si l'envoi de l'email a échoué)."
+            ),
+        ),
+        400: OpenApiResponse(description="Champs requis manquants, email déjà utilisé, ou téléphone déjà pris par un agent de terrain."),
+        401: OpenApiResponse(description="Authentification requise."),
+        403: OpenApiResponse(description="Seul un administrateur d'organisation peut créer un agent."),
+        404: OpenApiResponse(description="Organisation non trouvée."),
     },
-    responses={201: OrganisationMemberSerializer},
-)
+))
 class FieldAgentCreateView(APIView):
     """POST /organisations/<pk>/agents/create/
 
@@ -403,9 +601,64 @@ class FieldAgentCreateView(APIView):
         return Response(response_data, status=status.HTTP_201_CREATED)
 
 
-@extend_schema(
-    description="Modifier le rôle ou retirer un membre d'une organisation.",
-    responses={200: OrganisationMemberSerializer},
+@extend_schema_view(
+    patch=extend_schema(
+        tags=['Organisations & Membres'],
+        operation_id='organisations_members_update',
+        summary="Modifier un membre d'une organisation",
+        description=(
+            "Met à jour un membre (email, first_name, last_name, phone, org_role) — "
+            "tous les champs sont optionnels. Authentification requise ; réservé au "
+            "Super Admin ou à l'Admin de CETTE organisation. Règle anti-verrouillage : "
+            "impossible de rétrograder le dernier admin actif de l'organisation."
+        ),
+        parameters=[
+            OpenApiParameter('pk', OpenApiTypes.UUID, OpenApiParameter.PATH, description="Identifiant de l'organisation."),
+            OpenApiParameter('user_id', OpenApiTypes.UUID, OpenApiParameter.PATH, description="Identifiant du membre."),
+        ],
+        request=inline_serializer(
+            name='OrganisationMemberUpdateRequest',
+            fields={
+                'email': serializers.EmailField(required=False),
+                'first_name': serializers.CharField(required=False),
+                'last_name': serializers.CharField(required=False),
+                'phone': serializers.CharField(required=False),
+                'org_role': serializers.ChoiceField(
+                    choices=[ORG_ROLE_ADMIN, ORG_ROLE_BUREAU, ORG_ROLE_FIELD], required=False,
+                ),
+            },
+        ),
+        responses={
+            200: OrganisationMemberSerializer,
+            400: OpenApiResponse(description="Email déjà utilisé, téléphone déjà pris, rôle invalide, ou dernier admin actif."),
+            401: OpenApiResponse(description="Authentification requise."),
+            403: OpenApiResponse(description="Droits insuffisants."),
+            404: OpenApiResponse(description="Membre non trouvé dans cette organisation."),
+        },
+    ),
+    delete=extend_schema(
+        tags=['Organisations & Membres'],
+        operation_id='organisations_members_remove',
+        summary="Retirer un membre d'une organisation",
+        description=(
+            "Supprime physiquement un membre de l'organisation. Authentification "
+            "requise ; réservé au Super Admin ou à l'Admin de CETTE organisation. "
+            "Règle anti-verrouillage : impossible de retirer le dernier admin actif. "
+            "Renvoie 200 avec un message de confirmation."
+        ),
+        parameters=[
+            OpenApiParameter('pk', OpenApiTypes.UUID, OpenApiParameter.PATH, description="Identifiant de l'organisation."),
+            OpenApiParameter('user_id', OpenApiTypes.UUID, OpenApiParameter.PATH, description="Identifiant du membre."),
+        ],
+        request=None,
+        responses={
+            200: OpenApiResponse(description="Agent supprimé avec succès de l'organisation (objet `{message}`)."),
+            400: OpenApiResponse(description="Impossible de retirer le dernier administrateur actif de l'organisation."),
+            401: OpenApiResponse(description="Authentification requise."),
+            403: OpenApiResponse(description="Droits insuffisants."),
+            404: OpenApiResponse(description="Membre non trouvé dans cette organisation."),
+        },
+    ),
 )
 class OrganisationMemberDetailView(APIView):
     """
@@ -524,29 +777,55 @@ ORG_ROLE_LABELS = {
 }
 
 
-@extend_schema(
+@extend_schema_view(post=extend_schema(
+    tags=['Organisations & Membres'],
+    operation_id='organisations_staff_create',
+    summary="Créer un compte staff (admin / agent de bureau)",
     description=(
-        "Crée un utilisateur staff (admin ou agent de bureau) pour l'organisation. "
-        "Génère un mot de passe temporaire et envoie un email avec les identifiants, "
-        "le rôle et l'organisation. Le frontend force le changement de mot de passe à "
-        "la première connexion."
+        "Crée un utilisateur staff (`org_admin` ou `bureau_agent`) pour l'organisation : "
+        "génère un mot de passe temporaire (envoyé par email, NON renvoyé dans la "
+        "réponse) avec le rôle et l'organisation. Authentification requise ; réservé au "
+        "Super Admin (is_staff) ou à l'Admin de CETTE organisation. Le frontend force le "
+        "changement de mot de passe à la première connexion (`must_change_password`)."
     ),
-    request={
-        'application/json': {
-            'type': 'object',
-            'required': ['first_name', 'last_name', 'email', 'org_role'],
-            'properties': {
-                'first_name': {'type': 'string'},
-                'last_name': {'type': 'string'},
-                'email': {'type': 'string', 'format': 'email'},
-                'phone': {'type': 'string'},
-                'address': {'type': 'string'},
-                'org_role': {'type': 'string', 'enum': [ORG_ROLE_ADMIN, ORG_ROLE_BUREAU]},
+    parameters=[OpenApiParameter('pk', OpenApiTypes.UUID, OpenApiParameter.PATH, description="Identifiant de l'organisation.")],
+    request=inline_serializer(
+        name='StaffAccountCreateRequest',
+        fields={
+            'first_name': serializers.CharField(),
+            'last_name': serializers.CharField(),
+            'email': serializers.EmailField(),
+            'org_role': serializers.ChoiceField(choices=[ORG_ROLE_ADMIN, ORG_ROLE_BUREAU]),
+            'phone': serializers.CharField(required=False),
+            'address': serializers.CharField(required=False),
+        },
+    ),
+    examples=[
+        OpenApiExample(
+            'Création agent de bureau',
+            value={
+                'first_name': 'Moussa', 'last_name': 'Traoré',
+                'email': 'moussa.traore@example.com', 'org_role': 'bureau_agent',
+                'phone': '+221770000000',
             },
-        }
+            request_only=True,
+        ),
+    ],
+    responses={
+        201: OpenApiResponse(
+            response=OrganisationMemberSerializer,
+            description=(
+                "Compte staff créé. La réponse ajoute `must_change_password` (toujours "
+                "`true`) et `email_sent` (bool ; `email_error` si l'envoi a échoué). Le "
+                "mot de passe temporaire n'est PAS renvoyé (uniquement envoyé par email)."
+            ),
+        ),
+        400: OpenApiResponse(description="Champs requis manquants, org_role invalide, ou email déjà utilisé."),
+        401: OpenApiResponse(description="Authentification requise."),
+        403: OpenApiResponse(description="Seul un administrateur d'organisation peut créer un compte staff."),
+        404: OpenApiResponse(description="Organisation non trouvée."),
     },
-    responses={201: OrganisationMemberSerializer},
-)
+))
 class StaffAccountCreateView(APIView):
     """POST /organisations/<pk>/staff/create/
 

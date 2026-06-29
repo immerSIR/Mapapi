@@ -1,19 +1,25 @@
 """Notification & user-action endpoints."""
-from rest_framework import status, viewsets, generics
+from rest_framework import viewsets
 from rest_framework.permissions import IsAuthenticated
-from rest_framework.response import Response
 
-from drf_spectacular.utils import extend_schema
+from drf_spectacular.utils import extend_schema, extend_schema_view
 
 from ..serializer import *
 from .common import CustomPageNumberPagination
 
 
-@extend_schema(
-    description="Endpoint for filtering notifications by user ",
-    responses={200: NotificationSerializer()},
+@extend_schema_view(
+    list=extend_schema(
+        tags=['Notifications'],
+        operation_id='notifications_list',
+        summary='Mes notifications en attente',
+        description=(
+            "Notifications de l'utilisateur connecté liées à une collaboration "
+            "en attente (`colaboration.status='pending'`). Authentification requise."
+        ),
+        responses={200: NotificationSerializer(many=True)},
+    )
 )
-
 class NotificationViewSet(viewsets.ModelViewSet):
     queryset = Notification.objects.all()
     serializer_class = NotificationSerializer
@@ -22,9 +28,16 @@ class NotificationViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         user = self.request.user
         return Notification.objects.filter(user=user, colaboration__status='pending')
-@extend_schema(
-    description="Endpoint for retrieving user action",
-    responses={200: UserActionSerializer()},
+
+
+@extend_schema_view(
+    list=extend_schema(
+        tags=['Notifications'],
+        operation_id='user_actions_list',
+        summary='Mes actions (journal)',
+        description="Journal des actions de l'utilisateur connecté. Authentification requise.",
+        responses={200: UserActionSerializer(many=True)},
+    )
 )
 class UserActionView(viewsets.ModelViewSet):
     queryset = UserAction.objects.all()
