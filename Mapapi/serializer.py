@@ -14,6 +14,7 @@ from drf_spectacular.types import OpenApiTypes
 
 class OrganisationSerializer(serializers.ModelSerializer):
     members_count = serializers.SerializerMethodField(read_only=True)
+    incidents_taken_count = serializers.SerializerMethodField(read_only=True)
 
     class Meta:
         model = Organisation
@@ -21,6 +22,13 @@ class OrganisationSerializer(serializers.ModelSerializer):
 
     def get_members_count(self, obj) -> int:
         return obj.members.count()
+
+    def get_incidents_taken_count(self, obj) -> int:
+        # Incidents « pris en compte » par l'org = incidents dont le leader (taken_by)
+        # est un membre de l'organisation. Exclut les incidents supprimés.
+        return Incident.objects.filter(
+            taken_by__organisation_member=obj, is_deleted=False
+        ).count()
 
 
 class OrganisationMemberSerializer(serializers.ModelSerializer):

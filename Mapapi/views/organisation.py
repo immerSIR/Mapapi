@@ -4,7 +4,7 @@ import random
 import logging
 
 from Mapapi.views.common import CustomPageNumberPagination
-from django.db.models import Count
+from django.db.models import Count, Q
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +23,7 @@ from drf_spectacular.utils import (
 )
 from drf_spectacular.types import OpenApiTypes
 
-from ..models import Organisation, User, Incident, ORG_ROLE_ADMIN, ORG_ROLE_BUREAU, ORG_ROLE_FIELD
+from ..models import Organisation, User, Incident, ORG_ROLE_ADMIN, ORG_ROLE_BUREAU, ORG_ROLE_FIELD, PARTNER_STATUS_ACTIVE
 from ..serializer import OrganisationSerializer, OrganisationMemberSerializer
 from ..permissions import IsSuperAdminRole
 from ..roles import is_super_admin, is_org_admin
@@ -126,7 +126,25 @@ class OrganisationViewSet(generics.ListCreateAPIView, generics.RetrieveUpdateDes
     pagination_class = CustomPageNumberPagination  # Liste d'orgs sans pagination (généralement peu d'orgs)
 
     def get_queryset(self):
-        return Organisation.objects.all()
+        # Plus récentes d'abord, ordre stable (corrige le saut de position après édition).
+        qs = Organisation.objects.all().order_by('-created_at')
+        p = self.request.query_params
+        search = (p.get('search') or '').strip()
+        if search:
+            qs = qs.filter(
+                Q(name__icontains=search) | Q(acronym__icontains=search)
+                | Q(subdomain__icontains=search) | Q(intervention_country__icontains=search)
+            )
+        sector = p.get('activity_sector') or p.get('sector')
+        if sector:
+            qs = qs.filter(activity_sector=sector)
+        statut = p.get('partner_status') or p.get('status')
+        if statut:
+            qs = qs.filter(partner_status=statut)
+        org_type = p.get('organisation_type') or p.get('type')
+        if org_type:
+            qs = qs.filter(organisation_type=org_type)
+        return qs
 
     def get_permissions(self):
         # Spec §6 :
@@ -154,6 +172,37 @@ class OrganisationViewSet(generics.ListCreateAPIView, generics.RetrieveUpdateDes
                 status=status.HTTP_403_FORBIDDEN,
             )
         return super().update(request, *args, **kwargs)
+
+
+@extend_schema(
+    tags=['Organisations & Membres'],
+    operation_id='organisations_stats',
+    summary="Stats du dashboard organisations",
+    description="Cartes du dashboard organisations : total, actives, inactives, et nombre "
+                "total d'incidents pris en compte par des organisations. Accès public.",
+    responses={200: inline_serializer(name='OrganisationStats', fields={
+        'total': serializers.IntegerField(),
+        'active': serializers.IntegerField(),
+        'inactive': serializers.IntegerField(),
+        'incidents_taken_total': serializers.IntegerField(),
+    })},
+)
+class OrganisationStatsView(APIView):
+    """GET /organisations/stats/ — compteurs pour les cartes du dashboard orgs."""
+    permission_classes = []
+
+    def get(self, request):
+        total = Organisation.objects.count()
+        active = Organisation.objects.filter(partner_status=PARTNER_STATUS_ACTIVE).count()
+        incidents_taken = Incident.objects.filter(
+            taken_by__organisation_member__isnull=False, is_deleted=False
+        ).count()
+        return Response({
+            'total': total,
+            'active': active,
+            'inactive': total - active,
+            'incidents_taken_total': incidents_taken,
+        })
 
 
 @extend_schema_view(get=extend_schema(
