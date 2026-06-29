@@ -12,5 +12,6 @@ COPY . .
 
 # Railway injects PORT (we set it to 6543 so it doubles as the Supabase pooler
 # port that settings.py reads for the DB — a local listen vs a remote connect,
-# no conflict). Apply migrations, then serve via daphne (ASGI).
-CMD ["sh", "-c", "python manage.py migrate --noinput && daphne -b 0.0.0.0 -p ${PORT:-8000} backend.asgi:application"]
+# no conflict). Collect static (Swagger/ReDoc assets → served by WhiteNoise since
+# daphne has no nginx), apply migrations, then serve via daphne (ASGI).
+CMD ["sh", "-c", "python manage.py collectstatic --noinput && python manage.py migrate --noinput && daphne -b 0.0.0.0 -p ${PORT:-8000} backend.asgi:application"]

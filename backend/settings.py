@@ -208,16 +208,19 @@ SPECTACULAR_SETTINGS = {
         'filter': True,                # barre de recherche par tag/opération
         'docExpansion': 'none',
     },
-    # Le serveur de prod (daphne, sans nginx/whitenoise/collectstatic) ne sert pas
-    # /static/ → les assets SIDECAR renvoient 404 (page blanche). On charge donc
-    # l'UI Swagger/ReDoc depuis un CDN (repli standard de drf-spectacular).
-    'SWAGGER_UI_DIST': 'https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.17.14',
-    'SWAGGER_UI_FAVICON_HREF': 'https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.17.14/favicon-32x32.png',
-    'REDOC_DIST': 'https://cdn.jsdelivr.net/npm/redoc@2.1.5',
+    # UI Swagger/ReDoc en self-host : assets du paquet `drf-spectacular-sidecar`,
+    # rassemblés par `collectstatic` (cf. Dockerfile.deploy) et servis par
+    # WhiteNoise. Aucune dépendance à un CDN externe.
+    'SWAGGER_UI_DIST': 'SIDECAR',
+    'SWAGGER_UI_FAVICON_HREF': 'SIDECAR',
+    'REDOC_DIST': 'SIDECAR',
 }
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
+    # WhiteNoise sert les fichiers statiques (UI Swagger/ReDoc) directement depuis
+    # daphne en prod — il n'y a pas de nginx. Doit suivre SecurityMiddleware.
+    'whitenoise.middleware.WhiteNoiseMiddleware',
     # Rend toutes les routes /MapApi/ insensibles au slash final (cf. middleware).
     'Mapapi.middleware.SlashInsensitiveMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
