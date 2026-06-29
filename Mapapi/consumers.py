@@ -9,13 +9,24 @@
 
 Les serveurs (signals) poussent via channel_layer.group_send(group, {'type': 'broadcast', 'payload': {...}}).
 """
+import json
+
 from channels.generic.websocket import AsyncJsonWebsocketConsumer
+from django.core.serializers.json import DjangoJSONEncoder
 
 
 class _GroupConsumer(AsyncJsonWebsocketConsumer):
     """Base : rejoint un groupe si l'utilisateur est authentifié, relaie les
     messages 'broadcast' tels quels au client."""
     group_name = None
+
+    @classmethod
+    async def encode_json(cls, content):
+        # Les payloads poussés par les signaux contiennent des UUID et des datetime ;
+        # l'encodeur par défaut de channels (json.dumps brut) lèverait une exception
+        # « Object of type UUID is not JSON serializable » → fermeture WebSocket 1011.
+        # DjangoJSONEncoder sérialise UUID/datetime/Decimal proprement.
+        return json.dumps(content, cls=DjangoJSONEncoder)
 
     async def connect(self):
         user = self.scope.get('user')
