@@ -1018,10 +1018,16 @@ class AgentListView(generics.ListAPIView):
     pagination_class = CustomPageNumberPagination
 
     def get_queryset(self):
+        user = self.request.user
         qs = (User.objects
               .filter(org_role__in=_AGENT_ROLES)
               .select_related('organisation_member')
               .order_by('-date_joined'))
+        # Portée : le Super Admin voit TOUS les agents ; un admin/membre d'org ne voit
+        # que les agents de SON organisation (pas de fuite cross-org).
+        if not is_super_admin(user):
+            org_id = getattr(user, 'organisation_member_id', None)
+            qs = qs.filter(organisation_member_id=org_id) if org_id else qs.none()
         p = self.request.query_params
         search = (p.get('search') or '').strip()
         if search:
@@ -1058,6 +1064,11 @@ class AgentStatsView(APIView):
 
     def get(self, request):
         agents = User.objects.filter(org_role__in=_AGENT_ROLES)
+        # Même portée que /agents/ : le Super Admin compte tous les agents ; un
+        # admin/membre d'org ne compte que ceux de SON organisation.
+        if not is_super_admin(request.user):
+            org_id = getattr(request.user, 'organisation_member_id', None)
+            agents = agents.filter(organisation_member_id=org_id) if org_id else agents.none()
         return Response({
             'total': agents.count(),
             'active': agents.filter(is_active=True).count(),
