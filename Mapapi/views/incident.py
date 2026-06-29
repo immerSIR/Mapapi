@@ -45,7 +45,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 from ..services.model_chat_client import ask_model_chat
-from .common import CustomPageNumberPagination
+from .common import CustomPageNumberPagination, IncidentPagination
 from rest_framework_simplejwt.tokens import RefreshToken
 from django.contrib.auth.hashers import check_password
 from .. import roles as web_roles
@@ -366,7 +366,7 @@ class IncidentAPIListView(generics.CreateAPIView):
             .order_by('-pk')
         )
         items = visible_incidents_qs(base, request.user)
-        paginator = CustomPageNumberPagination()
+        paginator = IncidentPagination()
         result_page = paginator.paginate_queryset(items, request)
         serializer = IncidentGetSerializer(result_page, many=True)
         return paginator.get_paginated_response(serializer.data)
@@ -453,6 +453,7 @@ class MyIncidentsView(generics.ListAPIView):
     """GET /my-incidents/ — incidents reportés par l'utilisateur connecté."""
     permission_classes = [IsAuthenticated]
     serializer_class = IncidentGetSerializer
+    pagination_class = IncidentPagination
 
     def get_queryset(self):
         return (
@@ -488,6 +489,7 @@ class OrgIncidentsView(generics.ListAPIView):
     """
     permission_classes = [IsAuthenticated]
     serializer_class = IncidentGetSerializer
+    pagination_class = IncidentPagination
 
     def get_queryset(self):
         user = self.request.user
@@ -1074,7 +1076,7 @@ class IncidentResolvedAPIListView(generics.CreateAPIView):
 
     def get(self, request, format=None):
         items = Incident.objects.filter(etat="resolved").select_related('user_id', 'category_id').order_by('pk')
-        paginator = CustomPageNumberPagination()
+        paginator = IncidentPagination()
         result_page = paginator.paginate_queryset(items, request)
         serializer = IncidentGetSerializer(result_page, many=True)
         return paginator.get_paginated_response(serializer.data)
@@ -1264,7 +1266,7 @@ class IncidentNotResolvedAPIListView(generics.CreateAPIView):
 
     def get(self, request, format=None):
         items = Incident.objects.filter(etat="declared").select_related('user_id', 'category_id').order_by('pk')
-        paginator = CustomPageNumberPagination()
+        paginator = IncidentPagination()
         result_page = paginator.paginate_queryset(items, request)
         serializer = IncidentGetSerializer(result_page, many=True)
         return paginator.get_paginated_response(serializer.data)
