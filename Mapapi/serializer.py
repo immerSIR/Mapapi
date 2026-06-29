@@ -66,11 +66,11 @@ class OrganisationMemberSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
         fields = [
-            'id', 'email', 'first_name', 'last_name', 'phone',
+            'id', 'email', 'first_name', 'last_name', 'phone', 'avatar',
             'organisation_member', 'organisation_name', 'org_role', 'web_role',
             'agent_code', 'is_active', 'date_joined',
         ]
-        read_only_fields = ('id', 'email', 'date_joined', 'agent_code')
+        read_only_fields = ('id', 'email', 'date_joined', 'agent_code', 'avatar')
 
     @extend_schema_field(serializers.ChoiceField(
         choices=['super_admin', 'org_admin', 'bureau_agent', 'field_agent'],
