@@ -277,7 +277,7 @@ def _notify_antigel_leader(incident, pct, deadline_days):
         f"du délai de prise en compte ({deadline_days} j). Agissez pour éviter "
         f"son retour automatique en « Déclaré »."
     )[:255]
-    Notification.objects.create(user=leader, message=message, colaboration=None)
+    Notification.objects.create(user=leader, message=message, colaboration=None, incident=incident)
 
 
 @shared_task

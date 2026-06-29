@@ -2244,6 +2244,7 @@ class ReportToAdminView(APIView):
                 user=admin,
                 message=message,
                 colaboration=None,
+                incident=incident,
             )
             created += 1
 
@@ -2343,7 +2344,7 @@ class AssignIncidentToOrganisationView(APIView):
             f"« {incident.title or incident.zone} ». À accepter ou décliner sous 72 h."
         )[:255]
         for admin in admins:
-            Notification.objects.create(user=admin, message=message, colaboration=None)
+            Notification.objects.create(user=admin, message=message, colaboration=None, incident=incident)
 
         return Response(
             IncidentOrgAssignmentSerializer(assignment).data,

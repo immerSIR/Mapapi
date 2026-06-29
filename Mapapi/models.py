@@ -1078,10 +1078,24 @@ class Notification(UUIDModel):
     # Rendu nullable (Phase 4 — Feature 3 « Signaler à mon Admin ») : une
     # notification peut désormais exister sans collaboration rattachée.
     colaboration = models.ForeignKey(Collaboration, on_delete=models.CASCADE, null=True, blank=True)
+    # Incident concerné (pour la redirection au clic sur la notification).
+    incident = models.ForeignKey('Incident', on_delete=models.CASCADE, related_name='notifications', null=True, blank=True)
 
     def __str__(self):
         return self.message
-    
+
+    def redirect_link(self):
+        """Cible de redirection au clic sur la notification (ou None)."""
+        incident_id = self.incident_id or getattr(getattr(self, 'colaboration', None), 'incident_id', None)
+        if self.colaboration_id and incident_id:
+            return {'type': 'collaboration', 'collaboration_id': str(self.colaboration_id),
+                    'incident_id': str(incident_id), 'url': f'/collaboration-detail/{incident_id}'}
+        if incident_id:
+            return {'type': 'incident', 'incident_id': str(incident_id),
+                    'url': f'/incidents/{incident_id}'}
+        return None
+
+
 CHAT_ROLE_USER = 'user'
 CHAT_ROLE_ASSISTANT = 'assistant'
 CHAT_ROLE_SYSTEM = 'system'

@@ -629,9 +629,16 @@ class ColaborationSerializer(serializers.ModelSerializer):
 
 
 class NotificationSerializer(serializers.ModelSerializer):
+    link = serializers.SerializerMethodField(read_only=True)
+
     class Meta:
         model = Notification
         fields = '__all__'
+
+    @extend_schema_field(OpenApiTypes.OBJECT)
+    def get_link(self, obj):
+        # Cible de redirection au clic ({type, incident_id, [collaboration_id], url}) ou null.
+        return obj.redirect_link()
 
 
 class ChatHistorySerializer(serializers.ModelSerializer):

@@ -30,6 +30,8 @@ def ws_push_notification(sender, instance, created, **kwargs):
         'message': instance.message,
         'read': instance.read,
         'colaboration': instance.colaboration_id,
+        'incident': instance.incident_id,
+        'link': instance.redirect_link(),  # cible de redirection au clic
         'created_at': instance.created_at.isoformat() if instance.created_at else None,
     })
 
