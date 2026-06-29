@@ -865,7 +865,11 @@ class IncidentTaskSerializer(serializers.ModelSerializer):
     class Meta:
         model = IncidentTask
         fields = '__all__'
-        read_only_fields = ('created_by', 'created_at', 'updated_at', 'is_confirmed')
+        # `incident` est TOUJOURS injecté depuis l'URL par la vue
+        # (perform_create → serializer.save(incident=...)). Il ne doit donc pas être
+        # exigé/envoyé dans le corps (sinon is_valid() échoue « This field may not be
+        # null »). `created_by` est de même posé par la vue.
+        read_only_fields = ('incident', 'created_by', 'created_at', 'updated_at', 'is_confirmed')
 
     def validate(self, data):
         # Refus d'ajouter/modifier une tâche sur un incident clôturé
