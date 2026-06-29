@@ -96,6 +96,9 @@ class CollaborationDashboardView(generics.ListAPIView):
     """
     permission_classes = [IsAuthenticated]
     serializer_class = CollaborationEnrichedSerializer
+    # Paginé comme /collaboration/ : réponse {count, next, previous, results}
+    # (cohérence des formats côté frontend).
+    pagination_class = CustomPageNumberPagination
 
     def get_queryset(self):
         user = self.request.user
