@@ -395,7 +395,11 @@ CHANNELS_REDIS_URL = os.environ.get(
 )
 CHANNEL_LAYERS = {
     'default': {
-        'BACKEND': 'channels_redis.core.RedisChannelLayer',
+        # Couche pub/sub Redis : fan-out fiable des broadcasts entre processus
+        # (HTTP qui émet via group_send ↔ Daphne qui relaie au WebSocket). L'ancienne
+        # RedisChannelLayer (listes + BZPOPMIN bloquant) ne délivrait pas les messages
+        # cross-process et se fermait en 1011 (aggravé par redis-py >= 5.1).
+        'BACKEND': 'channels_redis.pubsub.RedisPubSubChannelLayer',
         'CONFIG': {'hosts': [CHANNELS_REDIS_URL]},
     },
 }
