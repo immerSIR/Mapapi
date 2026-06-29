@@ -66,6 +66,32 @@ def ws_push_task(sender, instance, created, **kwargs):
     })
 
 @receiver(post_save, sender=Collaboration)
+def ws_push_collaboration(sender, instance, created, **kwargs):
+    """Temps réel : pousse les créations/màj de collaboration à l'émetteur ET au
+    leader de l'incident → onglet collaboration + demandes instantanés.
+    Groupe ``collaborations_<user_id>`` (cf. CollaborationConsumer)."""
+    if kwargs.get('raw'):
+        return
+    payload = {
+        'event': 'collaboration_created' if created else 'collaboration_updated',
+        'id': instance.id,
+        'incident': instance.incident_id,
+        'status': instance.status,
+        'role': instance.role,
+        'sender': instance.user_id,
+        'created_at': instance.created_at.isoformat() if getattr(instance, 'created_at', None) else None,
+    }
+    # Cibles : l'émetteur (sa liste "envoyées") + le leader/récepteur (ses "demandes reçues").
+    targets = {instance.user_id}
+    leader_id = getattr(getattr(instance, 'incident', None), 'taken_by_id', None)
+    if leader_id:
+        targets.add(leader_id)
+    for uid in targets:
+        if uid:
+            _ws_broadcast(f"collaborations_{uid}", payload)
+
+
+@receiver(post_save, sender=Collaboration)
 def notify_organisation_on_collaboration(sender, instance, created, **kwargs):
     if kwargs.get('raw'):
         return  # chargement de fixtures (loaddata) : ne pas déclencher la logique métier

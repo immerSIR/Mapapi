@@ -56,3 +56,10 @@ class TaskConsumer(_GroupConsumer):
     async def resolve_group(self):
         incident_id = self.scope['url_route']['kwargs'].get('incident_id')
         return f"tasks_{incident_id}" if incident_id else None
+
+
+class CollaborationConsumer(_GroupConsumer):
+    """/ws/collaborations/ — collaborations de l'utilisateur connecté en temps réel
+    (onglet collaboration + demandes). Groupe ``collaborations_<user_id>``."""
+    async def resolve_group(self):
+        return f"collaborations_{self.scope['user'].id}"
