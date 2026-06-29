@@ -40,6 +40,11 @@ def _set_auth_cookies(request, response, access=None, refresh=None):
 class CookieTokenObtainPairView(TokenObtainPairView):
     """POST /login/ — pose les cookies httpOnly + renvoie aussi les tokens (mobile)."""
 
+    # Le login établit l'authentification (via identifiants) ; il ne doit PAS faire
+    # tourner l'auth par cookie (sinon un cookie résiduel déclencherait une
+    # vérif CSRF et bloquerait la reconnexion).
+    authentication_classes = []
+
     def post(self, request, *args, **kwargs):
         response = super().post(request, *args, **kwargs)
         if response.status_code == 200:
@@ -54,6 +59,10 @@ class CookieTokenObtainPairView(TokenObtainPairView):
 
 class CookieTokenRefreshView(TokenRefreshView):
     """POST /token/refresh/ — relit le refresh depuis le corps OU le cookie."""
+
+    # Le refresh s'authentifie via le refresh token lui-même, pas via l'access
+    # cookie → pas d'auth par cookie ici (donc pas de blocage CSRF).
+    authentication_classes = []
 
     def post(self, request, *args, **kwargs):
         refresh = request.data.get('refresh') or request.COOKIES.get(settings.AUTH_COOKIE_REFRESH)

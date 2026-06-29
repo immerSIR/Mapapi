@@ -25,8 +25,16 @@ DEBUG = True
 allowed_hosts_value = os.environ.get("ALLOWED_HOSTS", "localhost")
 ALLOWED_HOSTS = [host.strip() for host in allowed_hosts_value.split(",")]
 
-# Add CSRF trusted origins for HTTPS
+# Add CSRF trusted origins for HTTPS. Inclut le frontend cross-site (cookies
+# httpOnly + CSRF) : Railway, GitHub Pages, et le dev local (Vite :5173).
 CSRF_TRUSTED_ORIGINS = [f"https://{host.strip()}" for host in allowed_hosts_value.split(",")]
+CSRF_TRUSTED_ORIGINS += [
+    "https://*.up.railway.app",
+    "https://*.github.io",
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "http://localhost:3000",
+]
 
 
 # Application definition
@@ -227,8 +235,18 @@ MEDIA_URL = '/uploads/'
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
-CORS_ALLOW_ALL_ORIGINS = True
-CORS_ORIGIN_ALLOW_ALL = True
+# Cookies httpOnly cross-site → credentials obligatoires + origines explicites
+# (le wildcard '*' est interdit par le navigateur quand les credentials sont activés).
+# Le Bearer (mobile) continue de marcher : ces origines couvrent aussi le dashboard.
+CORS_ALLOW_ALL_ORIGINS = False
+CORS_ORIGIN_ALLOW_ALL = False
+CORS_ALLOW_CREDENTIALS = True
+CORS_ALLOWED_ORIGIN_REGEXES = [
+    r"^http://localhost(:\d+)?$",
+    r"^http://127\.0\.0\.1(:\d+)?$",
+    r"^https://.*\.up\.railway\.app$",
+    r"^https://.*\.github\.io$",
+]
 CORS_ALLOW_HEADERS = [
     'accept',
     'accept-encoding',
