@@ -53,7 +53,10 @@ class CookieTokenObtainPairView(TokenObtainPairView):
                 access=response.data.get('access'),
                 refresh=response.data.get('refresh'),
             )
-            get_token(request)  # garantit l'émission du cookie csrftoken
+            # Renvoie aussi le token CSRF DANS LE CORPS : en cross-site le SPA ne
+            # peut pas lire le cookie csrftoken (domaine backend) → il lit cette
+            # valeur et la renvoie en X-CSRFToken sur les écritures.
+            response.data['csrftoken'] = get_token(request)
         return response
 
 

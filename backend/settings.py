@@ -111,6 +111,21 @@ SIMPLE_JWT = {
 # Durées de vie des cookies = durées de vie des tokens.
 AUTH_COOKIE_ACCESS_MAX_AGE = int(SIMPLE_JWT["ACCESS_TOKEN_LIFETIME"].total_seconds())
 AUTH_COOKIE_REFRESH_MAX_AGE = int(SIMPLE_JWT["REFRESH_TOKEN_LIFETIME"].total_seconds())
+
+# Cookie CSRF : en prod le front et le back sont sur des domaines différents
+# (cross-site) → le cookie csrftoken doit être SameSite=None; Secure pour être
+# envoyé sur les requêtes cross-site. En local (http, same-site) on garde Lax.
+# Piloté par env (COOKIE_SAMESITE=None, COOKIE_SECURE=True sur Railway).
+COOKIE_SAMESITE = os.environ.get("COOKIE_SAMESITE", "Lax")
+COOKIE_SECURE = os.environ.get("COOKIE_SECURE", "False").lower() == "true"
+CSRF_COOKIE_SAMESITE = COOKIE_SAMESITE
+CSRF_COOKIE_SECURE = COOKIE_SECURE
+# Le SPA lit le token CSRF dans le CORPS de la réponse (login / get_csrf_token),
+# pas via document.cookie (illisible cross-site). On laisse toutefois le cookie
+# lisible en JS pour le dev same-site.
+CSRF_COOKIE_HTTPONLY = False
+SESSION_COOKIE_SAMESITE = COOKIE_SAMESITE
+SESSION_COOKIE_SECURE = COOKIE_SECURE
 SPECTACULAR_SETTINGS = {
     'TITLE': 'Map Action API',
     'DESCRIPTION': 'This comprehensive document serves as the official guide to understanding and utilizing the Map Action API.'
