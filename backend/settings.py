@@ -256,12 +256,14 @@ MEDIA_URL = '/uploads/'
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
-# Cookies httpOnly cross-site → credentials obligatoires + origines explicites
-# (le wildcard '*' est interdit par le navigateur quand les credentials sont activés).
-# Le Bearer (mobile) continue de marcher : ces origines couvrent aussi le dashboard.
-CORS_ALLOW_ALL_ORIGINS = False
-CORS_ORIGIN_ALLOW_ALL = False
-CORS_ALLOW_CREDENTIALS = True
+# Auth = JWT Bearer (le token, pas l'origine, fait foi). Aucune dépendance aux
+# cookies cross-site → on autorise toutes les origines SANS credentials, ce qui
+# laisse n'importe quel front (dashboard Railway, localhost:n'importe quel port,
+# l'environnement de test du dev front, mobile) appeler l'API avec un Bearer.
+# Note : '*' n'est permis par le navigateur QUE si les credentials sont désactivés.
+CORS_ALLOW_ALL_ORIGINS = True
+CORS_ORIGIN_ALLOW_ALL = True
+CORS_ALLOW_CREDENTIALS = False
 CORS_ALLOWED_ORIGIN_REGEXES = [
     r"^http://localhost(:\d+)?$",
     r"^http://127\.0\.0\.1(:\d+)?$",
@@ -316,11 +318,13 @@ CHANNEL_LAYERS = {
         'CONFIG': {'hosts': [CHANNELS_REDIS_URL]},
     },
 }
-# Origines autorisées pour les WebSockets (anti-hijacking cross-site). Patterns
-# sans schéma : un point initial = domaine + sous-domaines (port ignoré).
+# Origines autorisées pour les WebSockets. L'anti-hijacking par origine ne protège
+# que l'auth par cookie ; ici le WS est authentifié par ?token=<JWT> (le token fait
+# foi), donc on autorise toutes les origines par défaut — un front cross-site ne
+# peut rien faire sans le token. Surchargeable via CHANNELS_ALLOWED_ORIGINS.
 WS_ALLOWED_ORIGINS = os.environ.get(
     'CHANNELS_ALLOWED_ORIGINS',
-    'localhost,127.0.0.1,.up.railway.app,.github.io',
+    '*',
 ).split(',')
 
 CELERY_BROKER_URL = os.environ.get('CELERY_BROKER_URL', 'redis://redis-server:6379/0')
