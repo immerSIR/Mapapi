@@ -178,9 +178,6 @@ urlpatterns = [
     # Search Incident
     path('Search/', IncidentSearchView.as_view(), name="search"),
     path('prediction/', PredictionView.as_view(), name="predicton"),
-    path('histories/', history_list, name='history_list'),
-    path('history/<uuid:id>', ChatHistoryViewByIncident.as_view(), name='history_by_id'),
-    path('histories/add/', add_history, name='add_history'),
     # Prediction
     path('prediction/<uuid:id>/', PredictionViewByID.as_view(), name="predicton"),
     path('Incidentprediction/<uuid:id>/', PredictionViewByIncidentID.as_view(), name="prediction"),

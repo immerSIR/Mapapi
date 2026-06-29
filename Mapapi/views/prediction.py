@@ -1,17 +1,16 @@
-"""Prediction & chat history endpoints."""
-import json
+"""Prediction endpoints.
 
-from django.http import JsonResponse, HttpResponse
-from django.views.decorators.csrf import csrf_exempt
+The legacy session-keyed chat-history endpoints (`history_list`, `add_history`,
+`ChatHistoryViewByIncident`) were removed — they were unauthenticated, leaked all
+chat rows, and used a spoofable client `session_id`. The incident AI chat is now
+served by `IncidentChatView` (`incidents/<id>/chat/`), scoped to the user.
+"""
+from rest_framework import generics
 
-from rest_framework import status, generics
-from rest_framework.response import Response
-
-from drf_spectacular.utils import extend_schema, extend_schema_view, OpenApiParameter, OpenApiResponse
+from drf_spectacular.utils import extend_schema, extend_schema_view, OpenApiParameter
 from drf_spectacular.types import OpenApiTypes
 
 from ..serializer import *
-from .common import CustomPageNumberPagination
 
 
 @extend_schema_view(get=extend_schema(
@@ -26,28 +25,6 @@ class PredictionView(generics.ListAPIView):
     permission_classes = ()
     queryset = Prediction.objects.all()
     serializer_class = PredictionSerializer
-
-def history_list(request):
-    histories = ChatHistory.objects.all()  # Retrieve all history records
-    data = {"histories": list(histories.values("session_id", "question", "answer"))}
-    return JsonResponse(data)
-
-@csrf_exempt  # Disable CSRF token for this view for simplicity
-def add_history(request):
-    if request.method == "POST":
-        try:
-            data = json.loads(request.body)
-            history = ChatHistory(
-                user_id=data['session_id'],
-                question=data['question'],
-                answer=data['answer']
-            )
-            history.save()
-            return JsonResponse({"message": "History added successfully!"}, status=201)
-        except (KeyError, TypeError) as e:
-            return JsonResponse({"error": str(e)}, status=400)
-    else:
-        return HttpResponse(status=405)  # Method Not Allowed
 
 
 @extend_schema_view(get=extend_schema(
@@ -68,8 +45,7 @@ class PredictionViewByID(generics.ListAPIView):
 
     def get_queryset(self):
         prediction_id = self.kwargs['id']
-        queryset = Prediction.objects.filter(prediction_id=prediction_id)
-        return queryset
+        return Prediction.objects.filter(prediction_id=prediction_id)
 
 
 @extend_schema_view(get=extend_schema(
@@ -90,27 +66,4 @@ class PredictionViewByIncidentID(generics.ListAPIView):
 
     def get_queryset(self):
         incident_id = self.kwargs['id']
-        queryset = Prediction.objects.filter(incident_id=incident_id)
-        return queryset
-
-
-@extend_schema_view(get=extend_schema(
-    tags=['Prédiction & IA'],
-    operation_id='predictions_chat_history',
-    summary="Historique de chat par session",
-    description="Retourne l'historique de chat (`ChatHistory`) filtré par `session_id` "
-                "(résultat sous forme de liste). Endpoint public.",
-    parameters=[
-        OpenApiParameter('id', OpenApiTypes.UUID, OpenApiParameter.PATH,
-                         description="session_id de la conversation"),
-    ],
-    responses={200: ChatHistorySerializer(many=True)},
-))
-class ChatHistoryViewByIncident(generics.ListAPIView):
-    permission_classes = ()
-    serializer_class = ChatHistorySerializer
-
-    def get_queryset(self):
-        session_id = self.kwargs['id']
-        queryset = ChatHistory.objects.filter(session_id=session_id)
-        return queryset
+        return Prediction.objects.filter(incident_id=incident_id)
