@@ -26,7 +26,7 @@ from .common import CustomPageNumberPagination
 def collaboration_scope_q(user, scope):
     """Q de portée pour les listes de collaboration, calquée sur les onglets de l'UI.
 
-    - ``mine``     : MES propres collaborations — celles que J'AI faites, ou dont je
+    - ``self``     : MES propres collaborations — celles que J'AI faites, ou dont je
       suis le leader (``user=moi``). C'est l'onglet « Mes collaborations » : une seule
       carte par incident, avec MON rôle. Corrige le doublon où le leader d'un incident
       voyait AUSSI la collaboration (contributor/observer) d'une autre organisation et
@@ -36,7 +36,7 @@ def collaboration_scope_q(user, scope):
     - ``all`` (défaut) : union des deux — comportement historique, rétro-compatible.
     """
     scope = (scope or 'all').lower()
-    if scope == 'mine':
+    if scope == 'self':
         return Q(user=user)
     if scope == 'received':
         return Q(incident__taken_by=user) & ~Q(user=user)
@@ -57,12 +57,12 @@ def collaboration_scope_q(user, scope):
             OpenApiParameter(
                 'scope', OpenApiTypes.STR, OpenApiParameter.QUERY,
                 description=(
-                    "Portée (onglets UI). 'mine' = mes propres collaborations "
+                    "Portée (onglets UI). 'self' = mes propres collaborations "
                     "(« Mes collaborations », 1 carte/incident avec MON rôle) ; "
                     "'received' = demandes reçues sur mes incidents (« Demandes ») ; "
                     "'all' (défaut) = les deux."
                 ),
-                enum=['mine', 'received', 'all'],
+                enum=['self', 'received', 'all'],
             ),
             OpenApiParameter(
                 'status', OpenApiTypes.STR, OpenApiParameter.QUERY,
@@ -99,7 +99,7 @@ class CollaborationDashboardView(generics.ListAPIView):
 
     def get_queryset(self):
         user = self.request.user
-        # ?scope=mine | received | all (défaut). « Mes collaborations » -> mine
+        # ?scope=self | received | all (défaut). « Mes collaborations » -> self
         # (1 carte/incident avec MON rôle, plus de doublon côté leader) ;
         # « Demandes » -> received. cf. collaboration_scope_q.
         qs = Collaboration.objects.filter(
@@ -226,7 +226,7 @@ class CollaborationView(generics.CreateAPIView, generics.ListAPIView):
 
     def get_queryset(self):
         user = self.request.user
-        # ?scope=mine | received | all (défaut). « Mes collaborations » -> mine ;
+        # ?scope=self | received | all (défaut). « Mes collaborations » -> self ;
         # « Demandes » -> received. cf. collaboration_scope_q.
         qs = Collaboration.objects.filter(
             collaboration_scope_q(user, self.request.query_params.get('scope'))
