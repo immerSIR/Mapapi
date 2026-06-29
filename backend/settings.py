@@ -41,6 +41,7 @@ CSRF_TRUSTED_ORIGINS += [
 
 INSTALLED_APPS = [
     'daphne',
+    'channels',
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
@@ -298,6 +299,25 @@ CORS_ORIGIN_WHITELIST = [
 
 # Celery Configuration (broker/result configurable for deploys; defaults to the
 # docker-compose 'redis-server' service for local).
+# Channels (WebSockets temps réel) : couche Redis (réutilise le Redis Celery par
+# défaut ; surchargeable via CHANNELS_REDIS_URL).
+CHANNELS_REDIS_URL = os.environ.get(
+    'CHANNELS_REDIS_URL',
+    os.environ.get('CELERY_BROKER_URL', 'redis://redis-server:6379/0'),
+)
+CHANNEL_LAYERS = {
+    'default': {
+        'BACKEND': 'channels_redis.core.RedisChannelLayer',
+        'CONFIG': {'hosts': [CHANNELS_REDIS_URL]},
+    },
+}
+# Origines autorisées pour les WebSockets (anti-hijacking cross-site). Patterns
+# sans schéma : un point initial = domaine + sous-domaines (port ignoré).
+WS_ALLOWED_ORIGINS = os.environ.get(
+    'CHANNELS_ALLOWED_ORIGINS',
+    'localhost,127.0.0.1,.up.railway.app,.github.io',
+).split(',')
+
 CELERY_BROKER_URL = os.environ.get('CELERY_BROKER_URL', 'redis://redis-server:6379/0')
 CELERY_RESULT_BACKEND = os.environ.get(
     'CELERY_RESULT_BACKEND',

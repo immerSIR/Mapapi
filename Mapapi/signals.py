@@ -1,10 +1,67 @@
 from django.db.models.signals import post_save
 from django.dispatch import receiver
-from .models import Collaboration, Notification, User
+from asgiref.sync import async_to_sync
+from channels.layers import get_channel_layer
+from .models import Collaboration, Notification, User, DiscussionMessage, IncidentTask
 from .Send_mails import send_email
 import logging
 
 logger = logging.getLogger(__name__)
+
+
+def _ws_broadcast(group, payload):
+    """Pousse un message vers un groupe WebSocket (depuis un contexte sync)."""
+    try:
+        layer = get_channel_layer()
+        if layer is not None:
+            async_to_sync(layer.group_send)(group, {'type': 'broadcast', 'payload': payload})
+    except Exception as exc:  # ne jamais casser une écriture DB à cause du temps réel
+        logger.warning("WS broadcast échoué (%s): %s", group, exc)
+
+
+@receiver(post_save, sender=Notification)
+def ws_push_notification(sender, instance, created, **kwargs):
+    """Temps réel : pousse chaque notification à son destinataire (qui a fait quoi)."""
+    if not created:
+        return
+    _ws_broadcast(f"notifications_{instance.user_id}", {
+        'event': 'notification',
+        'id': instance.id,
+        'message': instance.message,
+        'read': instance.read,
+        'colaboration': instance.colaboration_id,
+        'created_at': instance.created_at.isoformat() if instance.created_at else None,
+    })
+
+
+@receiver(post_save, sender=DiscussionMessage)
+def ws_push_discussion(sender, instance, created, **kwargs):
+    """Temps réel : pousse chaque message de discussion aux membres de l'incident."""
+    if not created:
+        return
+    _ws_broadcast(f"discussion_{instance.incident_id}", {
+        'event': 'discussion_message',
+        'id': instance.id,
+        'incident': instance.incident_id,
+        'collaboration': instance.collaboration_id,
+        'sender': instance.sender_id,
+        'message': instance.message,
+        'created_at': instance.created_at.isoformat() if instance.created_at else None,
+    })
+
+
+@receiver(post_save, sender=IncidentTask)
+def ws_push_task(sender, instance, created, **kwargs):
+    """Temps réel : pousse les créations/màj de tâches aux membres de l'incident."""
+    _ws_broadcast(f"tasks_{instance.incident_id}", {
+        'event': 'task_created' if created else 'task_updated',
+        'id': instance.id,
+        'incident': instance.incident_id,
+        'title': instance.title,
+        'state': instance.state,
+        'assigned_to': instance.assigned_to_id,
+        'updated_at': instance.updated_at.isoformat() if getattr(instance, 'updated_at', None) else None,
+    })
 
 @receiver(post_save, sender=Collaboration)
 def notify_organisation_on_collaboration(sender, instance, created, **kwargs):
