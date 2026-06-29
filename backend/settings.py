@@ -213,7 +213,7 @@ SPECTACULAR_SETTINGS = {
     # l'UI Swagger/ReDoc depuis un CDN (repli standard de drf-spectacular).
     'SWAGGER_UI_DIST': 'https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.17.14',
     'SWAGGER_UI_FAVICON_HREF': 'https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.17.14/favicon-32x32.png',
-    'REDOC_DIST': 'https://cdn.jsdelivr.net/npm/redoc@2.1.5/bundles',
+    'REDOC_DIST': 'https://cdn.jsdelivr.net/npm/redoc@2.1.5',
 }
 
 MIDDLEWARE = [
