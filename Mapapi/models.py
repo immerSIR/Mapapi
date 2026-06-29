@@ -568,11 +568,16 @@ class Incident(UUIDModel):
     zone = models.CharField(max_length=250, blank=False,
                             null=False)
     description = models.TextField(max_length=500, blank=True, null=True)
-    photo = models.ImageField(upload_to='incidents/', 
-                        storage=ImageStorage(), 
+    photo = models.ImageField(upload_to='incidents/',
+                        storage=ImageStorage(),
                         null=True, blank=True)
-    video = models.FileField(upload_to='incidents/', 
-                        storage=VideoStorage(), 
+    # Miniature générée automatiquement à partir de `photo` (cf. save()) pour
+    # alléger le chargement de l'onglet incidents. Lecture seule côté API.
+    thumbnail = models.ImageField(upload_to='incidents/thumbnails/',
+                        storage=ImageStorage(),
+                        null=True, blank=True)
+    video = models.FileField(upload_to='incidents/',
+                        storage=VideoStorage(),
                         blank=True, null=True)
     audio = models.FileField(upload_to='incidents/', 
                         storage=VoiceStorage(), 
@@ -660,6 +665,32 @@ class Incident(UUIDModel):
 
     def __str__(self):
         return self.zone + ' '
+
+    def save(self, *args, **kwargs):
+        # Génère une miniature (≈320px) à partir de la photo, une seule fois, pour
+        # alléger le chargement de l'onglet incidents. N'échoue jamais la sauvegarde
+        # de l'incident si la génération de la miniature échoue.
+        if self.photo and not self.thumbnail:
+            self._generate_thumbnail()
+        super().save(*args, **kwargs)
+
+    def _generate_thumbnail(self, size=(320, 320)):
+        import logging
+        from io import BytesIO
+        from PIL import Image
+        from django.core.files.base import ContentFile
+        try:
+            self.photo.seek(0)
+            data = self.photo.read()
+            self.photo.seek(0)  # réinitialise le flux : la photo doit se sauvegarder intacte
+            img = Image.open(BytesIO(data)).convert('RGB')
+            img.thumbnail(size)  # conserve le ratio, borne à size
+            buf = BytesIO()
+            img.save(buf, format='JPEG', quality=80, optimize=True)
+            self.thumbnail.save(f"thumb_{self.pk}.jpg", ContentFile(buf.getvalue()), save=False)
+        except Exception as exc:  # noqa: BLE001
+            logging.getLogger(__name__).warning(
+                "Génération miniature échouée pour l'incident %s: %s", self.pk, exc)
 
     def update_progress(self, save=True):
         """Recalcule la progression de l'incident en fonction de ses tâches confirmées.
