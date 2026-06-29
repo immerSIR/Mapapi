@@ -141,32 +141,58 @@ ORG_ROLES = (
     (ORG_ROLE_FIELD, 'Agent de terrain'),
 )
 
-ORG_SECTOR_HUMANITARIAN = 'humanitarian'
-ORG_SECTOR_HUMANITARIAN_COORDINATION = 'humanitarian_coordination'
-ORG_SECTOR_DEVELOPMENT = 'development'
-ORG_SECTOR_CHILD_PROTECTION = 'child_protection'
+# --- Secteurs d'activité d'une organisation (valeur stockée → libellé FR) ---
+ORG_SECTOR_ENVIRONMENT = 'environment'
+ORG_SECTOR_SANITATION = 'sanitation'
+ORG_SECTOR_WATER_WASH = 'water_wash'
 ORG_SECTOR_HEALTH = 'health'
-ORG_SECTOR_NUTRITION_FOOD_SECURITY = 'nutrition_food_security'
-ORG_SECTOR_DEVELOPMENT_HUMANITARIAN = 'development_humanitarian'
+ORG_SECTOR_FOOD_SECURITY = 'food_security'
+ORG_SECTOR_PROTECTION = 'protection'
+ORG_SECTOR_HUMANITARIAN = 'humanitarian'
+ORG_SECTOR_DEVELOPMENT = 'development'
+ORG_SECTOR_GOVERNANCE = 'governance'
+ORG_SECTOR_EDUCATION = 'education'
+ORG_SECTOR_TECHNOLOGY_DATA = 'technology_data'
+ORG_SECTOR_MULTISECTOR = 'multisector'
+ORG_SECTOR_OTHER = 'other'
 ORG_ACTIVITY_SECTORS = (
-    (ORG_SECTOR_HUMANITARIAN, 'Humanitaire'),
-    (ORG_SECTOR_HUMANITARIAN_COORDINATION, 'Coordination humanitaire'),
-    (ORG_SECTOR_DEVELOPMENT, 'Développement'),
-    (ORG_SECTOR_CHILD_PROTECTION, "Protection de l'enfance"),
+    (ORG_SECTOR_ENVIRONMENT, 'Environnement'),
+    (ORG_SECTOR_SANITATION, 'Assainissement'),
+    (ORG_SECTOR_WATER_WASH, 'Eau / WASH'),
     (ORG_SECTOR_HEALTH, 'Santé'),
-    (ORG_SECTOR_NUTRITION_FOOD_SECURITY, 'Nutrition et sécurité alimentaire'),
-    (ORG_SECTOR_DEVELOPMENT_HUMANITARIAN, 'Développement et humanitaire'),
+    (ORG_SECTOR_FOOD_SECURITY, 'Sécurité alimentaire'),
+    (ORG_SECTOR_PROTECTION, 'Protection'),
+    (ORG_SECTOR_HUMANITARIAN, 'Humanitaire'),
+    (ORG_SECTOR_DEVELOPMENT, 'Développement'),
+    (ORG_SECTOR_GOVERNANCE, 'Gouvernance'),
+    (ORG_SECTOR_EDUCATION, 'Éducation'),
+    (ORG_SECTOR_TECHNOLOGY_DATA, 'Technologie / Données'),
+    (ORG_SECTOR_MULTISECTOR, 'Multisectoriel'),
+    (ORG_SECTOR_OTHER, 'Autre'),
 )
 
+# --- Types d'organisation (valeur stockée → libellé FR) ---
 ORG_TYPE_NGO = 'ngo'
 ORG_TYPE_INTERNATIONAL = 'international_organisation'
-ORG_TYPE_GOVERNMENTAL = 'governmental'
-ORG_TYPE_CIVIL_SOCIETY = 'civil_society'
+ORG_TYPE_UN_AGENCY = 'un_agency'
+ORG_TYPE_PUBLIC_INSTITUTION = 'public_institution'
+ORG_TYPE_LOCAL_AUTHORITY = 'local_authority'
+ORG_TYPE_ASSOCIATION_CSO = 'association_cso'
+ORG_TYPE_PRIVATE_SECTOR = 'private_sector'
+ORG_TYPE_PROJECT_PROGRAM = 'project_program'
+ORG_TYPE_COMMUNITY_STRUCTURE = 'community_structure'
+ORG_TYPE_OTHER = 'other'
 ORG_TYPES = (
     (ORG_TYPE_NGO, 'ONG'),
     (ORG_TYPE_INTERNATIONAL, 'Organisation internationale'),
-    (ORG_TYPE_GOVERNMENTAL, 'Gouvernementale'),
-    (ORG_TYPE_CIVIL_SOCIETY, 'Société civile'),
+    (ORG_TYPE_UN_AGENCY, 'Agence UN'),
+    (ORG_TYPE_PUBLIC_INSTITUTION, 'Institution publique'),
+    (ORG_TYPE_LOCAL_AUTHORITY, 'Collectivité territoriale'),
+    (ORG_TYPE_ASSOCIATION_CSO, 'Association / OSC'),
+    (ORG_TYPE_PRIVATE_SECTOR, 'Secteur privé'),
+    (ORG_TYPE_PROJECT_PROGRAM, 'Projet / Programme'),
+    (ORG_TYPE_COMMUNITY_STRUCTURE, 'Structure communautaire'),
+    (ORG_TYPE_OTHER, 'Autre'),
 )
 
 COUNTRY_SENEGAL = 'senegal'
