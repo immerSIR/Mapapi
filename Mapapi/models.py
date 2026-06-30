@@ -698,6 +698,14 @@ class Incident(UUIDModel):
         # de l'incident si la génération de la miniature échoue.
         if self.photo and not self.thumbnail:
             self._generate_thumbnail()
+        # Un incident résolu/clôturé est à 100% de progression — même s'il n'a aucune
+        # tâche (sinon `progress` restait à 0 et le front affichait 0% pour un incident
+        # résolu). On ajoute 'progress' à update_fields si fourni, pour bien le persister.
+        if self.etat in (RESOLVED, RESOLVED_DEFINITIVE) and self.progress != 100:
+            self.progress = 100
+            update_fields = kwargs.get('update_fields')
+            if update_fields is not None:
+                kwargs['update_fields'] = list(set(update_fields) | {'progress'})
         super().save(*args, **kwargs)
 
     def _generate_thumbnail(self, size=(320, 320)):
@@ -726,13 +734,17 @@ class Incident(UUIDModel):
         Une tâche 'failed' est considérée comme close (poids 1) mais ne contribue pas à 100%.
         Progression = round(done / total * 100).
         """
-        tasks = self.tasks.filter(is_confirmed=True)
-        total = tasks.count()
-        if total == 0:
-            self.progress = 0
+        # Un incident résolu est à 100% quoi qu'il arrive (clôture = terminé).
+        if self.etat in (RESOLVED, RESOLVED_DEFINITIVE):
+            self.progress = 100
         else:
-            done = tasks.filter(state=TASK_DONE).count()
-            self.progress = round(done * 100 / total)
+            tasks = self.tasks.filter(is_confirmed=True)
+            total = tasks.count()
+            if total == 0:
+                self.progress = 0
+            else:
+                done = tasks.filter(state=TASK_DONE).count()
+                self.progress = round(done * 100 / total)
         if save:
             self.save(update_fields=['progress'])
         return self.progress
