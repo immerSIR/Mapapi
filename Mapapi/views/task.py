@@ -13,7 +13,7 @@ from rest_framework import serializers
 
 from ..models import Incident, IncidentTask, TASK_PENDING, TASK_DONE, TASK_FAILED, Collaboration
 from ..serializer import IncidentTaskSerializer
-from ..permissions import IsIncidentLeaderOrReadOnlyCollaborator, IsIncidentLeader, IsIncidentCollaborator, IsIncidentLeaderOrContributor
+from ..permissions import IsIncidentLeader, IsIncidentLeaderOrContributor
 
 
 @extend_schema_view(
@@ -139,9 +139,9 @@ class IncidentTaskConfirmView(APIView):
         operation_id='tasks_update',
         summary="Modifier une tâche",
         description=(
-            "Remplace une tâche (PUT). Réservé au leader ; lecture seule pour les autres "
-            "collaborateurs (`IsIncidentLeaderOrReadOnlyCollaborator`). Refusé si l'incident "
-            "est clôturé."
+            "Remplace une tâche (PUT). Accessible au leader OU à un contributeur accepté "
+            "(`IsIncidentLeaderOrContributor`) ; lecture seule pour les observateurs. Refusé "
+            "si l'incident est clôturé."
         ),
         parameters=[
             OpenApiParameter('incident_id', OpenApiTypes.UUID, OpenApiParameter.PATH,
@@ -162,8 +162,9 @@ class IncidentTaskConfirmView(APIView):
         operation_id='tasks_partial_update',
         summary="Modifier partiellement une tâche",
         description=(
-            "Modification partielle d'une tâche (PATCH). Réservé au leader ; lecture seule "
-            "pour les autres collaborateurs (`IsIncidentLeaderOrReadOnlyCollaborator`)."
+            "Modification partielle d'une tâche (PATCH). Accessible au leader OU à un "
+            "contributeur accepté (`IsIncidentLeaderOrContributor`) ; lecture seule pour "
+            "les observateurs."
         ),
         parameters=[
             OpenApiParameter('incident_id', OpenApiTypes.UUID, OpenApiParameter.PATH,
@@ -183,7 +184,7 @@ class IncidentTaskConfirmView(APIView):
         tags=['Tâches'],
         operation_id='tasks_destroy',
         summary="Supprimer une tâche",
-        description="Supprime une tâche. Réservé au leader (`IsIncidentLeaderOrReadOnlyCollaborator`).",
+        description="Supprime une tâche. Accessible au leader OU à un contributeur accepté (`IsIncidentLeaderOrContributor`).",
         parameters=[
             OpenApiParameter('incident_id', OpenApiTypes.UUID, OpenApiParameter.PATH,
                              description="Identifiant de l'incident."),
@@ -199,13 +200,15 @@ class IncidentTaskConfirmView(APIView):
 )
 class IncidentTaskDetailView(generics.RetrieveUpdateDestroyAPIView):
     """
-    GET    /incidents/<incident_id>/tasks/<pk>/  — détail
-    PUT    /incidents/<incident_id>/tasks/<pk>/  — modifier (leader)
-    PATCH  /incidents/<incident_id>/tasks/<pk>/  — modifier partiel (leader)
-    DELETE /incidents/<incident_id>/tasks/<pk>/  — supprimer (leader)
+    GET    /incidents/<incident_id>/tasks/<pk>/  — détail (tout collaborateur accepté)
+    PUT    /incidents/<incident_id>/tasks/<pk>/  — modifier (leader ou contributeur)
+    PATCH  /incidents/<incident_id>/tasks/<pk>/  — modifier partiel (leader ou contributeur)
+    DELETE /incidents/<incident_id>/tasks/<pk>/  — supprimer (leader ou contributeur)
     """
     serializer_class = IncidentTaskSerializer
-    permission_classes = [IsAuthenticated, IsIncidentLeaderOrReadOnlyCollaborator]
+    # Leader OU contributeur accepté peut modifier/supprimer (cohérent avec la création
+    # et la complétion). Les observateurs gardent un accès en lecture seule.
+    permission_classes = [IsAuthenticated, IsIncidentLeaderOrContributor]
 
     def get_queryset(self):
         return IncidentTask.objects.filter(
