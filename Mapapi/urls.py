@@ -100,6 +100,7 @@ urlpatterns = [
     path('IncidentOnWeek_zone/<zone>', IncidentByWeekByZoneAPIView.as_view(), name='IncidentOnWeek_zone'),
     path('incident-filter/', IncidentFilterView.as_view(), name='incident_filter'),
     path('incidents/dashboard-stats/', IncidentDashboardStatsView.as_view(), name='incident-dashboard-stats'),
+    path('impact/', ImpactView.as_view(), name='impact'),
     path('my-incidents/', MyIncidentsView.as_view(), name='my-incidents'),
     path('my-interventions/', MyInterventionsView.as_view(), name='my-interventions'),
     path('org-incidents/', OrgIncidentsView.as_view(), name='org-incidents'),

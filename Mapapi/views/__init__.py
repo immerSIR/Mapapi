@@ -9,6 +9,7 @@ from .organisation import *  # noqa: F401,F403
 from .user import *  # noqa: F401,F403
 from .elu import *  # noqa: F401,F403
 from .incident import *  # noqa: F401,F403
+from .impact import *  # noqa: F401,F403
 from .evenement import *  # noqa: F401,F403
 from .contact import *  # noqa: F401,F403
 from .communaute import *  # noqa: F401,F403
