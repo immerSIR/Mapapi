@@ -1082,9 +1082,22 @@ class Prediction(UUIDModel):
         super().save(*args, **kwargs)
 
 
+NOTIF_TYPE_TITLES = {
+    'collaboration_request': 'Demande de collaboration',
+    'collaboration_accepted': 'Collaboration acceptée',
+    'collaboration_declined': 'Collaboration refusée',
+    'deadline_warning': 'Alerte délai',
+    'incident_report': 'Nouvel incident signalé',
+    'incident_assignment': 'Incident assigné',
+}
+
+
 class Notification(UUIDModel):
     user = models.ForeignKey(User, on_delete=models.CASCADE)
     message = models.CharField(max_length=255)
+    # Catégorie de la notification (pour titre/icône côté front, plus de titre en
+    # dur). cf. NOTIF_TYPE_TITLES pour le libellé FR par défaut.
+    notif_type = models.CharField(max_length=40, blank=True, default='')
     created_at = models.DateTimeField(auto_now_add=True)
     read = models.BooleanField(default=False)
     # Rendu nullable (Phase 4 — Feature 3 « Signaler à mon Admin ») : une
@@ -1095,6 +1108,11 @@ class Notification(UUIDModel):
 
     def __str__(self):
         return self.message
+
+    @property
+    def title(self):
+        """Titre FR par défaut selon le type (le front peut le surcharger)."""
+        return NOTIF_TYPE_TITLES.get(self.notif_type, 'Notification')
 
     def redirect_link(self):
         """Cible de redirection au clic sur la notification (ou None)."""

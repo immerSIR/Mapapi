@@ -43,7 +43,10 @@ def ws_push_notification(sender, instance, created, **kwargs):
     _ws_broadcast(f"notifications_{instance.user_id}", {
         'event': 'notification',
         'id': instance.id,
+        'type': instance.notif_type,            # catégorie (collaboration_request, …)
+        'title': instance.title,                # libellé FR prêt à afficher
         'message': instance.message,
+        'incident_title': getattr(getattr(instance, 'incident', None), 'title', None),
         'read': instance.read,
         'colaboration': instance.colaboration_id,
         'incident': instance.incident_id,
@@ -136,13 +139,19 @@ def ws_push_collaboration(sender, instance, created, **kwargs):
     Groupe ``collaborations_<user_id>`` (cf. CollaborationConsumer)."""
     if kwargs.get('raw'):
         return
+    inc = getattr(instance, 'incident', None)
+    sender = getattr(instance, 'user', None)
+    sender_org = getattr(sender, 'organisation_member', None) if sender else None
     payload = {
         'event': 'collaboration_created' if created else 'collaboration_updated',
         'id': instance.id,
         'incident': instance.incident_id,
+        'incident_title': getattr(inc, 'title', None),     # pour afficher sans refetch
         'status': instance.status,
         'role': instance.role,
         'sender': instance.user_id,
+        'sender_name': (f"{sender.first_name or ''} {sender.last_name or ''}".strip() or sender.email) if sender else None,
+        'sender_organisation': getattr(sender_org, 'name', None),
         'created_at': instance.created_at.isoformat() if getattr(instance, 'created_at', None) else None,
     }
     # Cibles : l'émetteur (sa liste "envoyées") + le leader/récepteur (ses "demandes reçues").
@@ -212,6 +221,7 @@ def notify_organisation_on_collaboration(sender, instance, created, **kwargs):
                 # Création de la notification pour l'organisation
                 Notification.objects.create(
                     user=user,
+                    notif_type='collaboration_request',
                     message=f"L'organisation {requesting_organisation} souhaite collaborer sur l'incident {incident.title} (Zone: {incident.zone}, Date: {incident.created_at.strftime('%d-%m-%Y')})",
                     colaboration=instance,
                     incident=incident,

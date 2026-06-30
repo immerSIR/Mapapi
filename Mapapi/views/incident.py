@@ -2334,7 +2334,7 @@ class ReportToAdminView(APIView):
         link = f"/incidents/{incident.id}"
         reporter_name = request.user.get_full_name() or request.user.email
         base_msg = (
-            f"{reporter_name} vous signale l'incident #{incident.id} "
+            f"{reporter_name} vous signale l'incident "
             f"« {incident.title or incident.zone} »."
         )
         if comment:
@@ -2346,6 +2346,7 @@ class ReportToAdminView(APIView):
         for admin in admins:
             Notification.objects.create(
                 user=admin,
+                notif_type='incident_report',
                 message=message,
                 colaboration=None,
                 incident=incident,
@@ -2444,11 +2445,12 @@ class AssignIncidentToOrganisationView(APIView):
         # Notifier les Admins de l'organisation cible (colaboration nullable).
         admins = organisation.members.filter(org_role=ORG_ROLE_ADMIN)
         message = (
-            f"Le Super Admin vous a assigné l'incident #{incident.id} "
+            f"Le Super Admin vous a assigné l'incident "
             f"« {incident.title or incident.zone} ». À accepter ou décliner sous 72 h."
         )[:255]
         for admin in admins:
-            Notification.objects.create(user=admin, message=message, colaboration=None, incident=incident)
+            Notification.objects.create(user=admin, notif_type='incident_assignment',
+                                        message=message, colaboration=None, incident=incident)
 
         return Response(
             IncidentOrgAssignmentSerializer(assignment).data,

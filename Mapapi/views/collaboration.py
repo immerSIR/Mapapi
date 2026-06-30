@@ -621,11 +621,13 @@ class DeclineCollaborationView(APIView):
                 to_email=requesting_user.email,
             )
             
-            notification_message = f'Votre demande de collaboration sur l\'incident {collaboration.incident.id} a été déclinée.'
+            notification_message = f"Votre demande de collaboration sur l'incident « {collaboration.incident.title} » a été déclinée."
             notification = Notification.objects.create(
                 user=requesting_user,
+                notif_type='collaboration_declined',
                 message=notification_message,
-                colaboration=collaboration
+                colaboration=collaboration,
+                incident=collaboration.incident,
             )
             notification.delete()
 

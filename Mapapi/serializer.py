@@ -682,6 +682,12 @@ class ColaborationSerializer(serializers.ModelSerializer):
 
 class NotificationSerializer(serializers.ModelSerializer):
     link = serializers.SerializerMethodField(read_only=True)
+    # `type` = catégorie (collaboration_request, incident_assignment, …) pour le
+    # front (icône/logique) ; `title` = libellé FR prêt à afficher (plus de titre en
+    # dur côté front). cf. incident_title pour le titre de l'incident concerné.
+    type = serializers.CharField(source='notif_type', read_only=True)
+    title = serializers.CharField(read_only=True)
+    incident_title = serializers.CharField(source='incident.title', read_only=True, default=None)
 
     class Meta:
         model = Notification
