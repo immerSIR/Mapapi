@@ -1,5 +1,6 @@
 """Message & response message endpoints + collaboration discussion messages."""
 from django.conf import settings
+from django.core.exceptions import ValidationError as DjangoValidationError
 from django.core.mail import EmailMultiAlternatives
 from django.db.models import Q
 from django.template.loader import render_to_string
@@ -374,10 +375,26 @@ class MessageByUserAPIView(generics.CreateAPIView):
         tags=['Messages & Communauté'],
         operation_id='messages_discussion_list',
         summary="Discussion d'un incident",
-        description="Retourne tous les messages du chat de groupe d'un incident, triés par date. Réservé aux collaborateurs acceptés (et au leader) ; en mode interne, réservé aux membres de l'organisation propriétaire.",
-        parameters=[OpenApiParameter('incident_id', OpenApiTypes.UUID, OpenApiParameter.PATH, description="Identifiant UUID de l'incident.")],
+        description=(
+            "Messages du chat de groupe d'un incident, triés par date. Réservé aux "
+            "collaborateurs acceptés (et au leader) ; en mode interne, réservé aux "
+            "membres de l'organisation propriétaire.\n\n"
+            "Pagination curseur (chargement progressif) : sans `limit`, renvoie tous "
+            "les messages (tableau, ordre chronologique). Avec `limit`, renvoie un "
+            "objet `{messages, has_more, next_before}` avec les N messages les plus "
+            "récents (ordre chronologique). Pour charger les plus anciens (scroll vers "
+            "le haut), rappeler avec `?before=<id du plus ancien message déjà chargé>`."
+        ),
+        parameters=[
+            OpenApiParameter('incident_id', OpenApiTypes.UUID, OpenApiParameter.PATH, description="Identifiant UUID de l'incident."),
+            OpenApiParameter('limit', OpenApiTypes.INT, OpenApiParameter.QUERY,
+                             description="Nombre de messages les plus récents à renvoyer (1–100). Absent = tous."),
+            OpenApiParameter('before', OpenApiTypes.UUID, OpenApiParameter.QUERY,
+                             description="Curseur : messages ANTÉRIEURS à ce message (son id). À utiliser avec `limit`."),
+        ],
         responses={
             200: DiscussionMessageSerializer(many=True),
+            400: OpenApiResponse(description="limit invalide, ou 'before' invalide/introuvable."),
             401: OpenApiResponse(description="Authentification requise."),
             404: OpenApiResponse(description="Incident introuvable ou accès non autorisé."),
         },
@@ -481,7 +498,59 @@ class DiscussionMessageView(generics.ListCreateAPIView):
         return DiscussionMessage.objects.filter(
             incident__id=incident_id
         ).order_by('created_at')
-    
+
+    def list(self, request, *args, **kwargs):
+        # get_queryset() applique le contrôle d'accès (collaborateur accepté) et
+        # renvoie les messages de l'incident triés par date croissante.
+        base = self.get_queryset()
+
+        # --- Pagination curseur (chargement progressif, identique au chat IA) ---
+        # Sans `limit` : tous les messages (tableau, rétro-compatible).
+        # Avec `limit` : les N messages les PLUS RÉCENTS (ordre chronologique croissant
+        # pour l'affichage) + `has_more` + `next_before`. Pour charger les plus anciens
+        # (scroll vers le haut), rappeler avec `?before=<id du plus ancien chargé>`.
+        limit_param = request.query_params.get('limit')
+        if limit_param is None:
+            serializer = self.get_serializer(base, many=True)
+            return Response(serializer.data)
+
+        try:
+            limit = int(limit_param)
+        except (TypeError, ValueError):
+            return Response({"detail": "limit doit être un entier."}, status=status.HTTP_400_BAD_REQUEST)
+        limit = max(1, min(limit, 100))
+
+        # Du plus récent au plus ancien (keyset sur created_at + id).
+        qs = base.order_by('-created_at', '-id')
+
+        before = request.query_params.get('before')
+        if before:
+            try:
+                cursor = base.filter(pk=before).values('created_at', 'id').first()
+            except (ValueError, DjangoValidationError):
+                cursor = None
+            if not cursor:
+                return Response(
+                    {"detail": "Paramètre 'before' invalide ou introuvable."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            qs = qs.filter(
+                Q(created_at__lt=cursor['created_at'])
+                | Q(created_at=cursor['created_at'], id__lt=cursor['id'])
+            )
+
+        rows = list(qs[:limit + 1])
+        has_more = len(rows) > limit
+        rows = rows[:limit]
+        next_before = str(rows[-1].id) if (rows and has_more) else None
+        rows.reverse()  # ordre chronologique croissant pour l'affichage
+        serializer = self.get_serializer(rows, many=True)
+        return Response({
+            "messages": serializer.data,
+            "has_more": has_more,
+            "next_before": next_before,
+        })
+
     def perform_create(self, serializer):
         incident_id = self.kwargs.get('incident_id')
         user = self.request.user
