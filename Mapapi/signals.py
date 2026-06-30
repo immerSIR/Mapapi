@@ -181,9 +181,14 @@ def notify_organisation_on_collaboration(sender, instance, created, **kwargs):
     if created:
         incident = instance.incident
         user = incident.taken_by
-        requesting_user = instance.user  
-        requesting_organisation = requesting_user.organisation  
-        
+        requesting_user = instance.user
+        # Nom réel de l'organisation du demandeur (organisation_member) — pas le champ
+        # legacy `organisation` souvent vide, qui affichait « L'organisation None ».
+        requesting_organisation = (
+            getattr(getattr(requesting_user, 'organisation_member', None), 'name', None)
+            or requesting_user.organisation or "Une organisation"
+        )
+
         if user and user.email:
             try:
                 context = {
@@ -191,8 +196,8 @@ def notify_organisation_on_collaboration(sender, instance, created, **kwargs):
                     'incident_title': incident.title,  
                     'incident_zone': incident.zone,  
                     'incident_creation_date': incident.created_at,  
-                    'organisation': user.organisation,
-                    'requesting_organisation': requesting_organisation 
+                    'organisation': getattr(getattr(user, 'organisation_member', None), 'name', None) or user.organisation,
+                    'requesting_organisation': requesting_organisation
                 }
                 
                 # Envoi de l'email à l'organisation
@@ -208,7 +213,8 @@ def notify_organisation_on_collaboration(sender, instance, created, **kwargs):
                 Notification.objects.create(
                     user=user,
                     message=f"L'organisation {requesting_organisation} souhaite collaborer sur l'incident {incident.title} (Zone: {incident.zone}, Date: {incident.created_at.strftime('%d-%m-%Y')})",
-                    colaboration=instance
+                    colaboration=instance,
+                    incident=incident,
                 )
                 logger.info(f"Notification créée pour l'utilisateur {user.email}.")
                 
