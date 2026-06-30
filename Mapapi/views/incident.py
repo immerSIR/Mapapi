@@ -516,19 +516,29 @@ class OrgIncidentsView(generics.ListAPIView):
             return Incident.objects.none()
 
         source = self.request.query_params.get('source', 'all')
-        mode = self.request.query_params.get('mode', None)
         # IDs des agents de terrain de l'org
         agent_ids = org.members.filter(org_role=ORG_ROLE_FIELD).values_list('id', flat=True)
 
-        qs = Incident.objects.select_related('user_id', 'category_id')
+        # « Mes interventions » = incidents que MON organisation a pris en charge EN
+        # INTERNE : take_in_charge_mode='internal' ET le responsable (taken_by)
+        # appartient à MON organisation. Le filtre par taken_by est essentiel — sans
+        # lui, on renvoyait TOUS les incidents internes (toutes orgs confondues), d'où
+        # « peu importe mon organisation, toujours la même ». Les incidents sur lesquels
+        # mon org ne fait que COLLABORER (taken_by = une autre org, mode 'collaborative')
+        # sont exclus → ils relèvent de « Mes collaborations ».
+        qs = (
+            Incident.objects
+            .select_related('user_id', 'category_id', 'taken_by__organisation_member')
+            .filter(take_in_charge_mode__iexact='internal', taken_by__organisation_member=org)
+            .exclude(is_deleted=True)
+        )
 
+        # Sous-filtre optionnel par source (qui a SIGNALÉ l'incident)
         if source == 'agents':
             qs = qs.filter(user_id__in=agent_ids)
         elif source == 'citizens':
             qs = qs.exclude(user_id__in=agent_ids)
-        # source == 'all' : pas de filtre supplémentaire
-    
-        qs = qs.filter(take_in_charge_mode__iexact='internal').exclude(take_in_charge_mode__isnull=True)
+        # source == 'all' (défaut) : pas de filtre supplémentaire
 
         return qs.order_by('-created_at')
 
