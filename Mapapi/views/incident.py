@@ -490,9 +490,15 @@ class MyIncidentsView(generics.ListAPIView):
                 "en charge interne. Filtrable par origine du reporter.",
     parameters=[
         OpenApiParameter('source', OpenApiTypes.STR, OpenApiParameter.QUERY,
-                         enum=['agents', 'citizens', 'all'], required=False,
-                         description="agents = reportés par les agents de terrain de l'org ; "
-                                     "citizens = reportés par les citoyens ; all (défaut) = tous."),
+                         enum=['agents_or_internal', 'agents', 'internal', 'citizens', 'all'], required=False,
+                         description="agents_or_internal (défaut) = interne + signalés par mes agents ; "
+                                     "agents = signalés par mes agents ; internal = pris en charge en interne ; "
+                                     "citizens = internes signalés par des citoyens ; all = union."),
+        OpenApiParameter('search', OpenApiTypes.STR, OpenApiParameter.QUERY, required=False,
+                         description="Recherche dans le titre, la description et la localisation (zone)."),
+        OpenApiParameter('status', OpenApiTypes.STR, OpenApiParameter.QUERY, required=False,
+                         enum=['declared', 'taken_into_account', 'in_progress', 'resolved'],
+                         description="Filtre par statut (etat) de l'incident. Alias : ?etat=."),
     ],
     responses={200: IncidentGetSerializer(many=True)},
     ),
@@ -541,14 +547,28 @@ class OrgIncidentsView(generics.ListAPIView):
         else:  # 'agents_or_internal' (défaut) | 'all' → union interne + agents
             flt = internal_q | agents_q
 
-        return (
+        qs = (
             Incident.objects
             .select_related('user_id', 'category_id', 'taken_by__organisation_member')
             .filter(flt)
             .exclude(is_deleted=True)
             .distinct()
-            .order_by('-created_at')
         )
+
+        # Recherche (titre / description / localisation=zone) + filtre par statut (etat).
+        p = self.request.query_params
+        search = (p.get('search') or '').strip()
+        if search:
+            qs = qs.filter(
+                Q(title__icontains=search)
+                | Q(description__icontains=search)
+                | Q(zone__icontains=search)
+            )
+        status_etat = p.get('status') or p.get('etat')
+        if status_etat:
+            qs = qs.filter(etat=status_etat)
+
+        return qs.order_by('-created_at')
 
     def list(self, request, *args, **kwargs):
         # Ajoute `reports_count` à chaque incident = nombre de rapports de terrain
