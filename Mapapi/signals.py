@@ -110,14 +110,17 @@ def ws_push_activity(sender, instance, created, **kwargs):
         return
     u = instance.user
     org = getattr(u, 'organisation_member', None) if u else None
+    user_name = (f"{u.first_name or ''} {u.last_name or ''}".strip() or u.email) if u else None
+    org_name = org.name if org else None
     _ws_broadcast("activity_feed", {
         'event': 'activity',
         'id': instance.id,
         'action': instance.action,
         'user': u.id if u else None,
-        'user_name': (f"{u.first_name or ''} {u.last_name or ''}".strip() or u.email) if u else None,
+        'user_name': user_name,
         'organisation_id': org.id if org else None,
-        'organisation_name': org.name if org else None,
+        'organisation_name': org_name,
+        'actor': org_name or user_name,   # à afficher en tête (org, repli sur la personne)
         'created_at': instance.created_at.isoformat() if getattr(instance, 'created_at', None) else None,
         'timeStamp': instance.timeStamp.isoformat() if getattr(instance, 'timeStamp', None) else None,
     })

@@ -715,10 +715,14 @@ class ActivityFeedSerializer(serializers.ModelSerializer):
     """Élément du flux d'activité : action + acteur + organisation + horodatage précis."""
     user_name = serializers.SerializerMethodField(read_only=True)
     organisation_name = serializers.SerializerMethodField(read_only=True)
+    # `actor` = ce qu'on AFFICHE en tête de l'élément : le nom de l'ORGANISATION
+    # (l'activité est au niveau org), avec repli sur le nom de la personne si elle
+    # n'a pas d'organisation (ex. super admin). À utiliser à la place de `user_name`.
+    actor = serializers.SerializerMethodField(read_only=True)
 
     class Meta:
         model = UserAction
-        fields = ['id', 'action', 'timeStamp', 'created_at', 'user', 'user_name', 'organisation_name']
+        fields = ['id', 'action', 'timeStamp', 'created_at', 'user', 'user_name', 'organisation_name', 'actor']
 
     def get_user_name(self, obj) -> str | None:
         u = obj.user
@@ -729,6 +733,9 @@ class ActivityFeedSerializer(serializers.ModelSerializer):
     def get_organisation_name(self, obj) -> str | None:
         u = obj.user
         return getattr(getattr(u, 'organisation_member', None), 'name', None) if u else None
+
+    def get_actor(self, obj) -> str | None:
+        return self.get_organisation_name(obj) or self.get_user_name(obj)
 
 
 class IncidentAssignmentSerializer(serializers.ModelSerializer):
