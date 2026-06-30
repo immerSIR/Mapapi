@@ -19,7 +19,7 @@ from ..models import (
     COLLAB_STATUS_PENDING, COLLAB_STATUS_ACCEPTED,
 )
 from ..serializer import CollaborationSerializer, CollaborationEnrichedSerializer
-from ..permissions import IsOrgAdmin
+from ..permissions import IsOrgAdmin, IsOrgOperative
 from ..Send_mails import send_email
 from .common import CustomPageNumberPagination
 
@@ -222,10 +222,13 @@ class CollaborationView(generics.CreateAPIView, generics.ListAPIView):
     pagination_class = CustomPageNumberPagination
 
     def get_permissions(self):
-        # Spec §6 : « Demander une collaboration » = Admin d'organisation uniquement.
+        # « Demander une collaboration » (contributor/observer) = membres opérationnels
+        # d'une organisation : Admin d'organisation OU agent de bureau. Le rôle 'leader'
+        # reste refusé au niveau du serializer (prise en charge auto uniquement), donc un
+        # agent de bureau ne peut jamais prendre l'incident en charge via cet endpoint.
         # La lecture (GET) reste ouverte à tout utilisateur authentifié.
         if self.request.method == 'POST':
-            return [IsAuthenticated(), IsOrgAdmin()]
+            return [IsAuthenticated(), IsOrgOperative()]
         return [IsAuthenticated()]
 
     def get_queryset(self):

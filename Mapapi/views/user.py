@@ -16,7 +16,9 @@ from django.utils.html import strip_tags
 from django.views.decorators.csrf import csrf_exempt
 
 from rest_framework import status, generics, permissions
-from rest_framework.decorators import api_view
+from rest_framework.decorators import api_view, permission_classes
+from ..roles import is_super_admin, is_org_admin
+from ..models import ORG_ROLE_BUREAU, ORG_ROLE_FIELD
 from rest_framework.exceptions import ValidationError, NotFound
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.permissions import IsAuthenticated
@@ -210,7 +212,45 @@ def UserRegisterView(request):
         404: OpenApiResponse(description="Utilisateur introuvable."),
     },
 )
+def _can_edit_user(actor, target):
+    """Modification autorisée : soi-même, l'admin de SON organisation, ou le Super Admin."""
+    if is_super_admin(actor):
+        return True
+    if actor.id == target.id:
+        return True
+    actor_org = getattr(actor, 'organisation_member_id', None)
+    return bool(
+        actor_org
+        and actor_org == getattr(target, 'organisation_member_id', None)
+        and is_org_admin(actor)
+        and not getattr(target, 'is_superuser', False)
+    )
+
+
+def _can_delete_user(actor, target):
+    """Suppression autorisée :
+      - Super Admin : n'importe quel utilisateur.
+      - Admin d'organisation : les membres de SON organisation (jamais un Super Admin).
+      - Agent de bureau : uniquement les agents de TERRAIN de son organisation (jamais un admin).
+      - Autres rôles : personne.
+    """
+    if is_super_admin(actor):
+        return True
+    if getattr(target, 'is_superuser', False):
+        return False  # seul un Super Admin peut supprimer un Super Admin
+    actor_org = getattr(actor, 'organisation_member_id', None)
+    same_org = bool(actor_org and actor_org == getattr(target, 'organisation_member_id', None))
+    if not same_org:
+        return False
+    if is_org_admin(actor):
+        return True
+    if getattr(actor, 'org_role', None) == ORG_ROLE_BUREAU:
+        return target.org_role == ORG_ROLE_FIELD
+    return False
+
+
 @api_view(['GET', 'PUT', 'DELETE'])
+@permission_classes([IsAuthenticated])
 def user_api_view(request, id):
     if request.method == 'GET':
         try:
@@ -225,6 +265,9 @@ def user_api_view(request, id):
             item = User.objects.get(pk=id)
         except User.DoesNotExist:
             return Response(status=status.HTTP_404_NOT_FOUND)
+        if not _can_edit_user(request.user, item):
+            return Response({'error': "Vous n'avez pas les droits pour modifier cet utilisateur."},
+                            status=status.HTTP_403_FORBIDDEN)
         data = request.data.copy()
         if "password" in request.data:
             item.set_password(request.data['password'])
@@ -241,6 +284,9 @@ def user_api_view(request, id):
             item = User.objects.get(pk=id)
         except User.DoesNotExist:
             return Response(status=status.HTTP_404_NOT_FOUND)
+        if not _can_delete_user(request.user, item):
+            return Response({'error': "Vous n'avez pas les droits pour supprimer cet utilisateur."},
+                            status=status.HTTP_403_FORBIDDEN)
         item.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
 
