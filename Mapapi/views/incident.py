@@ -1630,10 +1630,10 @@ class HandleIncidentView(APIView):
         if action == "taken_into_account":
             incident.etat = "taken_into_account"
             incident.taken_by = user
-            action_message = f"took incident {incident_id} into account"
+            action_message = f"a pris en charge l'incident «{incident.title}»."
         elif action == "resolved":
             incident.etat = "resolved"
-            action_message = f"resolved incident {incident_id}"
+            action_message = f"a résolu l'incident «{incident.title}»."
 
         incident.save()
 
@@ -1774,7 +1774,7 @@ class TakeInChargeView(APIView):
                 defaults={'role': COLLAB_ROLE_LEADER, 'status': 'accepted'},
             )
 
-            action_message = f"took incident {incident_id} into account in internal mode"
+            action_message = f"a pris en charge l'incident «{incident.title}» en mode interne."
             UserAction.objects.create(user=request.user, action=action_message)
 
             return Response({
@@ -1847,7 +1847,7 @@ class TakeInChargeView(APIView):
                 status='accepted',
             ).exclude(user=request.user).update(status='pending')
 
-            action_message = f"took incident {incident_id} into account as leader (collaborative)"
+            action_message = f"a pris en charge l'incident «{incident.title}» en tant que leader (mode collaboratif)."
             UserAction.objects.create(user=request.user, action=action_message)
 
             return Response({
@@ -1877,7 +1877,8 @@ class TakeInChargeView(APIView):
             incident.take_in_charge_mode = 'collaborative'
             incident.save(update_fields=['take_in_charge_mode'])
 
-        action_message = f"joined incident {incident_id} as {role} ({collab_status})"
+        role_fr = {'contributor': 'contributeur', 'observer': 'observateur', 'leader': 'leader'}.get(role, role)
+        action_message = f"a rejoint l'incident «{incident.title}» en tant que {role_fr}."
         UserAction.objects.create(user=request.user, action=action_message)
 
         return Response({

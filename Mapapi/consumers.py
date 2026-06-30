@@ -74,3 +74,19 @@ class CollaborationConsumer(_GroupConsumer):
     (onglet collaboration + demandes). Groupe ``collaborations_<user_id>``."""
     async def resolve_group(self):
         return f"collaborations_{self.scope['user'].id}"
+
+
+class ActivityFeedConsumer(_GroupConsumer):
+    """/ws/activity-feed/ — flux d'activité de la plateforme en temps réel.
+    Groupe global ``activity_feed``. Comme le REST /activity-feed/, on n'affiche
+    PAS au viewer l'activité de sa PROPRE organisation : on filtre chaque broadcast
+    selon l'organisation du viewer (connue via ``scope['user']``)."""
+    async def resolve_group(self):
+        return "activity_feed"
+
+    async def broadcast(self, event):
+        payload = event['payload']
+        my_org = getattr(self.scope.get('user'), 'organisation_member_id', None)
+        if my_org is not None and str(payload.get('organisation_id')) == str(my_org):
+            return  # activité de ma propre org -> ignorée (cohérent avec le REST)
+        await self.send_json(payload)

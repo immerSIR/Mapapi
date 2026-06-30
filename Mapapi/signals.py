@@ -97,6 +97,29 @@ def ws_push_task_deleted(sender, instance, **kwargs):
     })
 
 
+@receiver(post_save, sender=UserAction)
+def ws_push_activity(sender, instance, created, **kwargs):
+    """Temps réel : pousse chaque nouvelle action au flux d'activité global
+    (groupe ``activity_feed``). L'ActivityFeedConsumer filtre côté serveur
+    l'activité de l'organisation du viewer — comme le REST /activity-feed/ qui
+    exclut sa propre organisation."""
+    if kwargs.get('raw') or not created:
+        return
+    u = instance.user
+    org = getattr(u, 'organisation_member', None) if u else None
+    _ws_broadcast("activity_feed", {
+        'event': 'activity',
+        'id': instance.id,
+        'action': instance.action,
+        'user': u.id if u else None,
+        'user_name': (f"{u.first_name or ''} {u.last_name or ''}".strip() or u.email) if u else None,
+        'organisation_id': org.id if org else None,
+        'organisation_name': org.name if org else None,
+        'created_at': instance.created_at.isoformat() if getattr(instance, 'created_at', None) else None,
+        'timeStamp': instance.timeStamp.isoformat() if getattr(instance, 'timeStamp', None) else None,
+    })
+
+
 @receiver(pre_save, sender=Collaboration)
 def _capture_collab_old_status(sender, instance, **kwargs):
     """Capture l'ancien statut pour détecter accept/decline dans le post_save."""
@@ -132,17 +155,20 @@ def ws_push_collaboration(sender, instance, created, **kwargs):
             _ws_broadcast(f"collaborations_{uid}", payload)
     # Journalise l'activité (flux d'activité + journal d'actions).
     try:
+        # L'acteur (nom + organisation) est exposé séparément par ActivityFeedSerializer
+        # (user_name / organisation_name) ; le texte de l'action ne le répète donc pas.
+        incident_title = getattr(getattr(instance, 'incident', None), 'title', None) or "un incident"
         if created:
             UserAction.objects.create(
                 user=instance.user,
-                action=f"{_actor_label(instance.user)} a demandé une collaboration sur un incident."[:255],
+                action=f"a demandé une collaboration sur l'incident «{incident_title}»."[:255],
             )
         elif getattr(instance, '_old_status', None) != instance.status and instance.status in ('accepted', 'declined'):
             actor = getattr(getattr(instance, 'incident', None), 'taken_by', None) or instance.user
             verbe = "a accepté" if instance.status == 'accepted' else "a refusé"
             UserAction.objects.create(
                 user=actor,
-                action=f"{_actor_label(actor)} {verbe} une demande de collaboration."[:255],
+                action=f"{verbe} une demande de collaboration sur l'incident «{incident_title}»."[:255],
             )
     except Exception as exc:  # ne jamais casser l'écriture DB
         logger.warning("log activité collaboration échoué: %s", exc)
