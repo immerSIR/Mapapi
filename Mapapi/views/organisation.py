@@ -578,22 +578,28 @@ class FieldAgentCreateView(APIView):
             'phone': phone,
         }.items() if not v]
         if missing:
+            # `fields` = liste des champs en erreur (le front peut les surligner) ;
+            # `errors` = message par champ ; `error` = résumé lisible (rétro-compat).
             return Response(
-                {"error": f"Champs requis manquants : {', '.join(missing)}."},
+                {"error": f"Champs requis manquants : {', '.join(missing)}.",
+                 "fields": missing,
+                 "errors": {f: "Ce champ est requis." for f in missing}},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
         # Email unique
         if User.objects.filter(email=email).exists():
+            msg = "Un utilisateur avec cet email existe déjà. Utilise l'endpoint /members/add/ pour l'affecter."
             return Response(
-                {"error": "Un utilisateur avec cet email existe déjà. Utilise l'endpoint /members/add/ pour l'affecter."},
+                {"error": msg, "field": "email", "errors": {"email": msg}},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
         # Téléphone unique parmi les agents de terrain (sinon login PIN ambigu)
         if User.objects.filter(phone=phone, org_role=ORG_ROLE_FIELD).exists():
+            msg = "Un agent de terrain avec ce numéro de téléphone existe déjà."
             return Response(
-                {"error": "Un agent de terrain avec ce numéro de téléphone existe déjà."},
+                {"error": msg, "field": "phone", "errors": {"phone": msg}},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -731,7 +737,11 @@ class OrganisationMemberDetailView(APIView):
         )
 
     def patch(self, request, pk, user_id):
-        if not self._check_permission(request, pk):
+        # Admin d'org / Super Admin gèrent tous les membres ; en plus, un agent de
+        # BUREAU de cette org peut modifier un agent de TERRAIN (et seulement lui).
+        is_admin_level = self._check_permission(request, pk)
+        is_bureau_same_org = is_bureau_agent(request.user) and request.user.organisation_member_id == pk
+        if not is_admin_level and not is_bureau_same_org:
             return Response(
                 {"error": "Droits insuffisants."},
                 status=status.HTTP_403_FORBIDDEN,
@@ -742,12 +752,29 @@ class OrganisationMemberDetailView(APIView):
         except User.DoesNotExist:
             return Response({"error": "Membre non trouvé dans cette organisation."}, status=status.HTTP_404_NOT_FOUND)
 
+        # Garde-fous agent de bureau : seulement un agent de terrain, et pas de
+        # changement de rôle (pas de promotion vers bureau/admin).
+        if is_bureau_same_org and not is_admin_level:
+            if member.org_role != ORG_ROLE_FIELD:
+                return Response(
+                    {"error": "Un agent de bureau ne peut modifier qu'un agent de terrain."},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+            req_role = request.data.get('org_role')
+            if req_role and req_role != ORG_ROLE_FIELD:
+                return Response(
+                    {"error": "Un agent de bureau ne peut pas changer le rôle d'un agent.",
+                     "field": "org_role", "errors": {"org_role": "Modification du rôle non autorisée."}},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+
         # Modification des informations de l'agent
         email = request.data.get('email')
         if email:
             email = email.strip().lower()
             if User.objects.filter(email=email).exclude(pk=user_id).exists():
-                return Response({"error": "Cet email est déjà utilisé par un autre utilisateur."}, status=status.HTTP_400_BAD_REQUEST)
+                msg = "Cet email est déjà utilisé par un autre utilisateur."
+                return Response({"error": msg, "field": "email", "errors": {"email": msg}}, status=status.HTTP_400_BAD_REQUEST)
             member.email = email
 
         first_name = request.data.get('first_name')
@@ -763,13 +790,14 @@ class OrganisationMemberDetailView(APIView):
             phone = phone.strip()
             # Si c'est un agent de terrain, s'assurer que le téléphone est unique parmi les agents de terrain
             if phone and User.objects.filter(phone=phone, org_role=ORG_ROLE_FIELD).exclude(pk=user_id).exists():
-                return Response({"error": "Un agent de terrain avec ce numéro de téléphone existe déjà."}, status=status.HTTP_400_BAD_REQUEST)
+                msg = "Un agent de terrain avec ce numéro de téléphone existe déjà."
+                return Response({"error": msg, "field": "phone", "errors": {"phone": msg}}, status=status.HTTP_400_BAD_REQUEST)
             member.phone = phone
 
         new_role = request.data.get('org_role')
         if new_role:
             if new_role not in [ORG_ROLE_ADMIN, ORG_ROLE_BUREAU, ORG_ROLE_FIELD]:
-                return Response({"error": "Rôle invalide."}, status=status.HTTP_400_BAD_REQUEST)
+                return Response({"error": "Rôle invalide.", "field": "org_role", "errors": {"org_role": "Rôle invalide."}}, status=status.HTTP_400_BAD_REQUEST)
             # Règle anti-verrouillage : on ne peut pas rétrograder le DERNIER admin actif de l'org.
             # Le Super Admin peut l'outrepasser (gestion plateforme).
             if (
