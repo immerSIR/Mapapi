@@ -919,7 +919,13 @@ class AgentAssignedIncidentsView(generics.ListAPIView):
         operation_id='field_reports_list',
         summary="Lister les rapports de terrain",
         description="Rapports de visite terrain, filtrés selon le rôle (staff → tous, "
-                    "agent de terrain → les siens, sinon ceux de son organisation).",
+                    "agent de terrain → les siens, sinon ceux de son organisation). "
+                    "Filtre optionnel `?incident=<uuid>` pour n'avoir que les rapports "
+                    "des agents sur un incident donné.",
+        parameters=[
+            OpenApiParameter('incident', OpenApiTypes.UUID, OpenApiParameter.QUERY,
+                             description="Ne renvoyer que les rapports de terrain de cet incident."),
+        ],
         responses={200: FieldReportSerializer(many=True)},
     ),
     post=extend_schema(
@@ -945,13 +951,20 @@ class FieldReportListCreateView(generics.ListCreateAPIView):
     def get_queryset(self):
         user = self.request.user
         qs = FieldReport.objects.select_related('incident', 'agent').order_by('-visited_at')
+        # Portée par rôle (staff → tous ; agent terrain → les siens ; sinon ceux de son org)
         if user.is_staff or user.is_superuser:
-            return qs
-        if user.org_role == ORG_ROLE_FIELD:
-            return qs.filter(agent=user)
-        if user.organisation_member:
-            return qs.filter(agent__organisation_member=user.organisation_member)
-        return FieldReport.objects.none()
+            pass
+        elif user.org_role == ORG_ROLE_FIELD:
+            qs = qs.filter(agent=user)
+        elif user.organisation_member:
+            qs = qs.filter(agent__organisation_member=user.organisation_member)
+        else:
+            return FieldReport.objects.none()
+        # Filtre optionnel : les rapports de terrain d'UN incident donné.
+        incident_id = self.request.query_params.get('incident') or self.request.query_params.get('incident_id')
+        if incident_id:
+            qs = qs.filter(incident_id=incident_id)
+        return qs
 
     def create(self, request, *args, **kwargs):
         incident_id = request.data.get('incident') or request.data.get('incident_id')
