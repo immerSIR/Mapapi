@@ -1,5 +1,8 @@
+import json
+
 from django.db.models.signals import post_save, pre_save
 from django.dispatch import receiver
+from django.core.serializers.json import DjangoJSONEncoder
 from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
 from .models import Collaboration, Notification, User, DiscussionMessage, IncidentTask, UserAction
@@ -15,11 +18,19 @@ logger = logging.getLogger(__name__)
 
 
 def _ws_broadcast(group, payload):
-    """Pousse un message vers un groupe WebSocket (depuis un contexte sync)."""
+    """Pousse un message vers un groupe WebSocket (depuis un contexte sync).
+
+    Le payload est d'abord normalisé en primitives JSON (UUID -> str, datetime ->
+    ISO, etc.) AVANT group_send : la couche Channels sérialise en msgpack, qui ne
+    sait pas empaqueter un UUID/datetime. Sans cela, group_send levait
+    « can not serialize 'UUID' object », l'exception était avalée ci-dessous, et le
+    broadcast était silencieusement perdu (WebSocket ouvert mais aucun message reçu).
+    """
     try:
+        safe_payload = json.loads(json.dumps(payload, cls=DjangoJSONEncoder))
         layer = get_channel_layer()
         if layer is not None:
-            async_to_sync(layer.group_send)(group, {'type': 'broadcast', 'payload': payload})
+            async_to_sync(layer.group_send)(group, {'type': 'broadcast', 'payload': safe_payload})
     except Exception as exc:  # ne jamais casser une écriture DB à cause du temps réel
         logger.warning("WS broadcast échoué (%s): %s", group, exc)
 
