@@ -3,7 +3,7 @@ from django.db.models import Q, Count
 from django.utils import timezone
 
 from rest_framework import status, generics, serializers
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import IsAuthenticated, SAFE_METHODS
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -20,7 +20,7 @@ from ..models import (
 )
 from ..serializer import CollaborationSerializer, CollaborationEnrichedSerializer
 from ..permissions import IsOrgAdmin, IsOrgOperative
-from ..roles import is_super_admin
+from ..roles import is_super_admin, is_org_admin, is_bureau_agent
 from ..Send_mails import send_email
 from .common import CustomPageNumberPagination
 
@@ -49,6 +49,32 @@ def collaboration_scope_q(user, scope):
     if scope == 'received':
         return Q(incident__taken_by=user) & ~Q(user=user)
     return Q(user=user) | Q(incident__taken_by=user)
+
+
+def collaboration_read_visibility_q(user):
+    """Collaborations qu'un utilisateur a le droit de CONSULTER (détail en lecture).
+
+    - Super Admin : toutes (supervision plateforme).
+    - Admin d'org / agent de bureau : celles de SON organisation — créées par un
+      membre de son org (``user`` ∈ org) OU portant sur un incident dont le leader
+      est de son org (``incident.taken_by`` ∈ org) — en plus des siennes. C'est ce
+      qui permet à un agent de bureau d'ouvrir le détail d'une collaboration de son
+      org (ex. un incident interne pris en charge par son organisation) sans 404.
+    - Autres rôles : uniquement les siennes (créées) + reçues (leader de l'incident).
+
+    NB : réservé à la LECTURE. L'écriture (PATCH/DELETE) reste limitée au
+    propriétaire / leader / super admin (cf. ``CollaborationDetailView``).
+    """
+    if is_super_admin(user):
+        return Q()
+    visible = Q(user=user) | Q(incident__taken_by=user)
+    org_id = getattr(user, 'organisation_member_id', None)
+    if org_id and (is_org_admin(user) or is_bureau_agent(user)):
+        visible |= (
+            Q(user__organisation_member_id=org_id)
+            | Q(incident__taken_by__organisation_member_id=org_id)
+        )
+    return visible
 
 
 @extend_schema_view(
@@ -389,6 +415,12 @@ class CollaborationDetailView(generics.RetrieveUpdateDestroyAPIView):
 
     def get_queryset(self):
         user = self.request.user
+        # LECTURE (GET) : un membre d'org (admin/agent de bureau) peut consulter le
+        # détail d'une collaboration de SON organisation — pas seulement les siennes.
+        if self.request.method in SAFE_METHODS:
+            return Collaboration.objects.filter(collaboration_read_visibility_q(user))
+        # ÉCRITURE (PATCH/DELETE) : réservée au propriétaire, au leader de l'incident,
+        # ou au super admin — un agent de bureau ne modifie pas la collab d'un autre.
         if user.is_staff or user.is_superuser:
             return Collaboration.objects.all()
         return Collaboration.objects.filter(
