@@ -801,16 +801,16 @@ class IncidentAssignmentListCreateView(generics.ListCreateAPIView):
         except Incident.DoesNotExist:
             return Response({"error": "Incident non trouvé."}, status=status.HTTP_404_NOT_FOUND)
 
-        # Spec §6 : « Assigner un incident à ses agents » = Admin d'organisation uniquement
-        # (un agent de bureau ne peut pas engager l'organisation en assignant).
-        if not (request.user.is_superuser or is_org_admin(request.user)):
+        # Assigner un incident à un agent de terrain = staff/super admin, OU
+        # Admin d'organisation OU agent de bureau de l'organisation propriétaire de
+        # l'incident (cf. _can_manage_assignment). L'agent de bureau gère les agents
+        # de terrain de son org (création/édition/suppression… et assignation).
+        # Le serializer garantit que l'agent assigné est bien un agent de terrain.
+        if not self._can_manage_assignment(request.user, incident):
             return Response(
-                {"error": "Seul un administrateur d'organisation peut assigner un incident à un agent."},
+                {"error": "Vous n'avez pas les droits pour assigner cet incident à un agent."},
                 status=status.HTTP_403_FORBIDDEN,
             )
-
-        if not self._can_manage_assignment(request.user, incident):
-            return Response({"error": "Droits insuffisants."}, status=status.HTTP_403_FORBIDDEN)
 
         data = request.data.copy()
         data['incident'] = incident.id
@@ -878,13 +878,21 @@ class IncidentAssignmentListCreateView(generics.ListCreateAPIView):
     def _can_manage_assignment(user, incident):
         if user.is_staff or user.is_superuser:
             return True
+        # Admin d'org ET agent de bureau gèrent les agents de terrain de leur org.
         if user.org_role not in [ORG_ROLE_ADMIN, ORG_ROLE_BUREAU]:
             return False
         if not user.organisation_member:
             return False
-        if incident.user_id and incident.user_id.organisation_member == user.organisation_member:
+        org = user.organisation_member
+        # 1) Incident de MON organisation : signalé par mon org, ou pris en charge par mon org.
+        if incident.user_id and incident.user_id.organisation_member == org:
             return True
-        if incident.taken_by and incident.taken_by.organisation_member == user.organisation_member:
+        if incident.taken_by and incident.taken_by.organisation_member == org:
+            return True
+        # 2) Incident PUBLIC encore NON pris en charge (taken_by=None) : n'importe quelle
+        #    organisation peut y dépêcher un de ses agents de terrain (investigation d'un
+        #    signalement citoyen). Dès qu'une org le prend en charge, seul elle gère (cas 1).
+        if getattr(incident, 'is_public', False) and incident.taken_by_id is None:
             return True
         return False
 
