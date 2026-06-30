@@ -1115,11 +1115,26 @@ class Notification(UUIDModel):
         return NOTIF_TYPE_TITLES.get(self.notif_type, 'Notification')
 
     def redirect_link(self):
-        """Cible de redirection au clic sur la notification (ou None)."""
+        """Cible de redirection au clic sur la notification (ou None).
+
+        - ``collaboration_request`` (demande REÇUE par le leader) → page collaboration,
+          onglet « Demandes » (là où on accepte/refuse), PAS le détail.
+        - autre notif de collaboration (acceptée/refusée…) → détail de la collaboration,
+          via le **collaboration_id** (et non l'incident_id — c'est l'id attendu par la
+          route ``/collaboration-detail/<id>``).
+        - sinon, si un incident est lié → page de l'incident.
+        """
         incident_id = self.incident_id or getattr(getattr(self, 'colaboration', None), 'incident_id', None)
-        if self.colaboration_id and incident_id:
-            return {'type': 'collaboration', 'collaboration_id': str(self.colaboration_id),
-                    'incident_id': str(incident_id), 'url': f'/collaboration-detail/{incident_id}'}
+        if self.colaboration_id:
+            collab_id = str(self.colaboration_id)
+            inc = str(incident_id) if incident_id else None
+            if self.notif_type == 'collaboration_request':
+                return {'type': 'collaboration_request', 'tab': 'demandes',
+                        'collaboration_id': collab_id, 'incident_id': inc,
+                        'url': '/collaboration?tab=demandes'}
+            return {'type': 'collaboration', 'tab': 'mes-collaborations',
+                    'collaboration_id': collab_id, 'incident_id': inc,
+                    'url': f'/collaboration-detail/{collab_id}'}
         if incident_id:
             return {'type': 'incident', 'incident_id': str(incident_id),
                     'url': f'/incidents/{incident_id}'}
