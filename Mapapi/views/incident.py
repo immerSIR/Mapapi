@@ -550,6 +550,35 @@ class OrgIncidentsView(generics.ListAPIView):
             .order_by('-created_at')
         )
 
+    def list(self, request, *args, **kwargs):
+        # Ajoute `reports_count` à chaque incident = nombre de rapports de terrain
+        # (FieldReport) des agents de MON organisation sur cet incident — la même
+        # portée que le panneau « Rapports des agents » (GET /field-reports/?incident=).
+        # Une seule requête groupée par page (pas de N+1).
+        queryset = self.get_queryset()
+        page = self.paginate_queryset(queryset)
+        objs = list(page) if page is not None else list(queryset)
+        serializer = self.get_serializer(objs, many=True)
+        data = serializer.data
+
+        org = getattr(request.user, 'organisation_member', None)
+        counts = {}
+        ids = [o.id for o in objs]
+        if ids and org:
+            counts = dict(
+                FieldReport.objects
+                .filter(incident_id__in=ids, agent__organisation_member=org)
+                .values('incident_id')
+                .annotate(n=Count('id'))
+                .values_list('incident_id', 'n')
+            )
+        for d, o in zip(data, objs):
+            d['reports_count'] = counts.get(o.id, 0)
+
+        if page is not None:
+            return self.get_paginated_response(data)
+        return Response(data)
+
 
 def _assigned_agent_dict(assignment):
     """Représentation explicite d'un agent assigné à un incident."""
