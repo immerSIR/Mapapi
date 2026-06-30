@@ -5,7 +5,8 @@ from django.dispatch import receiver
 from django.core.serializers.json import DjangoJSONEncoder
 from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
-from .models import Collaboration, Notification, User, DiscussionMessage, IncidentTask, UserAction
+from .models import (Collaboration, Notification, User, DiscussionMessage, IncidentTask,
+                     UserAction, COLLAB_ROLE_LEADER)
 
 
 def _actor_label(user):
@@ -194,6 +195,13 @@ def notify_organisation_on_collaboration(sender, instance, created, **kwargs):
         incident = instance.incident
         user = incident.taken_by
         requesting_user = instance.user
+        # La collaboration AUTO-CRÉÉE du LEADER lui-même (lors de la prise en charge,
+        # rôle 'leader') n'est PAS une demande d'une autre organisation : on ne notifie
+        # pas / on n'envoie pas d'email au leader à propos de sa propre prise en charge
+        # (sinon « Bonjour USAD, l'organisation USAD souhaite collaborer… »).
+        if user and requesting_user and (
+                requesting_user.id == user.id or instance.role == COLLAB_ROLE_LEADER):
+            return
         # Nom réel de l'organisation du demandeur (organisation_member) — pas le champ
         # legacy `organisation` souvent vide, qui affichait « L'organisation None ».
         requesting_organisation = (
