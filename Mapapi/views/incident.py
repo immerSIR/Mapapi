@@ -87,6 +87,32 @@ def visible_incidents_qs(base_qs, user):
     return base_qs.filter(is_public=True)
 
 
+# États « résolus » exposés par /incidentResolved/ (résolu + résolu définitif).
+# /incidentNotResolved/ = tout le reste (declared, taken_into_account, in_progress,
+# in_validation) — et non plus seulement 'declared' comme avant.
+RESOLVED_ETATS = [RESOLVED, RESOLVED_DEFINITIVE]
+
+
+def org_own_work_q(user):
+    """Q : incidents que MON organisation gère déjà — à EXCLURE des listes
+    publiques résolus/non-résolus (ils sont déjà dans « Mes interventions »).
+
+    Deux cas, exactement comme « Mes interventions » (OrgIncidentsView) :
+      - pris en charge EN INTERNE par mon org (``take_in_charge_mode='internal'``
+        ET ``taken_by`` ∈ mon org), OU
+      - signalés par un agent de TERRAIN de mon org (``user_id`` ∈ mes agents).
+
+    Utilisateur sans organisation → rien à exclure (Q qui ne matche aucune ligne).
+    """
+    org = getattr(user, 'organisation_member', None)
+    if not org:
+        return Q(pk__in=[])
+    agent_ids = list(org.members.filter(org_role=ORG_ROLE_FIELD).values_list('id', flat=True))
+    internal_q = Q(take_in_charge_mode__iexact='internal', taken_by__organisation_member=org)
+    agents_q = Q(user_id__in=agent_ids)
+    return internal_q | agents_q
+
+
 def engage_incident(incident, leader):
     """Engage l'organisation sur l'incident (sémantique « prise en compte »).
 
@@ -1172,17 +1198,26 @@ class ToggleIncidentPublicView(APIView):
     ),
     post=extend_schema(exclude=True),
 )
-class IncidentResolvedAPIListView(generics.CreateAPIView):
-    permission_classes = ()
-    queryset = Incident.objects.all()
-    serializer_class = IncidentSerializer
+class IncidentResolvedAPIListView(generics.ListAPIView):
+    """GET /incidentResolved/ — incidents RÉSOLUS (resolved + resolved_definitive),
+    **sauf** ceux que mon organisation gère déjà : pris en charge en interne par mon
+    org OU signalés par mes agents de terrain (cf. ``org_own_work_q`` ; ce sont les
+    incidents résolus « des autres »). Authentification requise (filtre relatif à
+    l'org du demandeur). Paginé."""
+    permission_classes = [IsAuthenticated]
+    serializer_class = IncidentGetSerializer
+    pagination_class = IncidentPagination
 
-    def get(self, request, format=None):
-        items = Incident.objects.filter(etat="resolved").select_related('user_id', 'category_id').order_by('pk')
-        paginator = IncidentPagination()
-        result_page = paginator.paginate_queryset(items, request)
-        serializer = IncidentGetSerializer(result_page, many=True)
-        return paginator.get_paginated_response(serializer.data)
+    def get_queryset(self):
+        return (
+            Incident.objects
+            .filter(etat__in=RESOLVED_ETATS)
+            .exclude(org_own_work_q(self.request.user))
+            .exclude(is_deleted=True)
+            .select_related('user_id', 'category_id', 'taken_by__organisation_member')
+            .distinct()
+            .order_by('-created_at')
+        )
 
 @extend_schema_view(
     get=extend_schema(
@@ -1362,17 +1397,26 @@ class IncidentDashboardStatsView(APIView):
     ),
     post=extend_schema(exclude=True),
 )
-class IncidentNotResolvedAPIListView(generics.CreateAPIView):
-    permission_classes = ()
-    queryset = Incident.objects.all()
-    serializer_class = IncidentSerializer
+class IncidentNotResolvedAPIListView(generics.ListAPIView):
+    """GET /incidentNotResolved/ — incidents NON RÉSOLUS (tout sauf resolved /
+    resolved_definitive : declared, taken_into_account, in_progress, in_validation —
+    auparavant la vue ne renvoyait QUE 'declared', d'où des incidents manquants),
+    **sauf** ceux que mon organisation gère déjà (pris en charge en interne par mon
+    org OU signalés par mes agents, cf. ``org_own_work_q``). Auth requise. Paginé."""
+    permission_classes = [IsAuthenticated]
+    serializer_class = IncidentGetSerializer
+    pagination_class = IncidentPagination
 
-    def get(self, request, format=None):
-        items = Incident.objects.filter(etat="declared").select_related('user_id', 'category_id').order_by('pk')
-        paginator = IncidentPagination()
-        result_page = paginator.paginate_queryset(items, request)
-        serializer = IncidentGetSerializer(result_page, many=True)
-        return paginator.get_paginated_response(serializer.data)
+    def get_queryset(self):
+        return (
+            Incident.objects
+            .exclude(etat__in=RESOLVED_ETATS)
+            .exclude(org_own_work_q(self.request.user))
+            .exclude(is_deleted=True)
+            .select_related('user_id', 'category_id', 'taken_by__organisation_member')
+            .distinct()
+            .order_by('-created_at')
+        )
 
 @extend_schema_view(
     get=extend_schema(
