@@ -219,8 +219,9 @@ class IncidentTaskDetailView(generics.RetrieveUpdateDestroyAPIView):
     summary="Marquer une tâche terminée",
     description=(
         "Passe la tâche à l'état `done`. Au moins une preuve est requise "
-        "(`proof_image` ou `proof_video`), envoyée en `multipart/form-data`. Réservé au "
-        "leader (`IsIncidentLeader`). Déclenche le recalcul de la progression de l'incident."
+        "(`proof_image` ou `proof_video`), envoyée en `multipart/form-data`. Accessible au "
+        "leader OU à un contributeur accepté (`IsIncidentLeaderOrContributor`) — celui qui "
+        "fait le travail peut fournir la preuve. Déclenche le recalcul de la progression."
     ),
     parameters=[
         OpenApiParameter('incident_id', OpenApiTypes.UUID, OpenApiParameter.PATH,
@@ -243,7 +244,10 @@ class IncidentTaskDetailView(generics.RetrieveUpdateDestroyAPIView):
 ))
 class IncidentTaskCompleteView(APIView):
     """POST /incidents/<incident_id>/tasks/<pk>/complete/"""
-    permission_classes = [IsAuthenticated, IsIncidentLeader]
+    # Leader OU contributeur accepté : un collaborateur qui fait le travail peut
+    # marquer la tâche terminée en uploadant une preuve. Le leader garde la main via
+    # la confirmation (`is_confirmed`) qui gouverne la progression de l'incident.
+    permission_classes = [IsAuthenticated, IsIncidentLeaderOrContributor]
 
     def post(self, request, incident_id, pk):
         try:
@@ -277,8 +281,9 @@ class IncidentTaskCompleteView(APIView):
     operation_id='tasks_fail',
     summary="Marquer une tâche échouée",
     description=(
-        "Passe la tâche à l'état `failed`. Un motif `failure_reason` est requis. Réservé au "
-        "leader (`IsIncidentLeader`). Déclenche le recalcul de la progression de l'incident."
+        "Passe la tâche à l'état `failed`. Un motif `failure_reason` est requis. Accessible "
+        "au leader OU à un contributeur accepté (`IsIncidentLeaderOrContributor`). "
+        "Déclenche le recalcul de la progression de l'incident."
     ),
     parameters=[
         OpenApiParameter('incident_id', OpenApiTypes.UUID, OpenApiParameter.PATH,
@@ -302,7 +307,9 @@ class IncidentTaskCompleteView(APIView):
 ))
 class IncidentTaskFailView(APIView):
     """POST /incidents/<incident_id>/tasks/<pk>/fail/"""
-    permission_classes = [IsAuthenticated, IsIncidentLeader]
+    # Leader OU contributeur accepté (idem complete : celui qui fait le travail peut
+    # signaler l'échec avec un motif).
+    permission_classes = [IsAuthenticated, IsIncidentLeaderOrContributor]
 
     def post(self, request, incident_id, pk):
         try:

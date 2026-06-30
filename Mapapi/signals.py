@@ -1,6 +1,6 @@
 import json
 
-from django.db.models.signals import post_save, pre_save
+from django.db.models.signals import post_save, pre_save, post_delete
 from django.dispatch import receiver
 from django.core.serializers.json import DjangoJSONEncoder
 from asgiref.sync import async_to_sync
@@ -82,6 +82,20 @@ def ws_push_task(sender, instance, created, **kwargs):
         'assigned_to': instance.assigned_to_id,
         'updated_at': instance.updated_at.isoformat() if getattr(instance, 'updated_at', None) else None,
     })
+
+
+@receiver(post_delete, sender=IncidentTask)
+def ws_push_task_deleted(sender, instance, **kwargs):
+    """Temps réel : pousse la SUPPRESSION d'une tâche aux membres de l'incident,
+    pour que la carte disparaisse instantanément (et pas seulement au refetch)."""
+    if kwargs.get('raw'):
+        return
+    _ws_broadcast(f"tasks_{instance.incident_id}", {
+        'event': 'task_deleted',
+        'id': instance.id,
+        'incident': instance.incident_id,
+    })
+
 
 @receiver(pre_save, sender=Collaboration)
 def _capture_collab_old_status(sender, instance, **kwargs):
