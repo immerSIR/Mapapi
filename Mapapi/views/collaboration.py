@@ -20,6 +20,7 @@ from ..models import (
 )
 from ..serializer import CollaborationSerializer, CollaborationEnrichedSerializer
 from ..permissions import IsOrgAdmin, IsOrgOperative
+from ..roles import is_super_admin
 from ..Send_mails import send_email
 from .common import CustomPageNumberPagination
 
@@ -35,7 +36,13 @@ def collaboration_scope_q(user, scope):
     - ``received`` : demandes REÇUES sur les incidents que JE dirige, faites par
       d'AUTRES (``incident.taken_by=moi`` et ``user≠moi``). C'est l'onglet « Demandes ».
     - ``all`` (défaut) : union des deux — comportement historique, rétro-compatible.
+
+    Le Super Admin supervise la plateforme : il voit TOUTES les collaborations,
+    quel que soit le ``scope`` demandé (les filtres status/role/incident_id
+    s'appliquent toujours par-dessus dans la vue).
     """
+    if is_super_admin(user):
+        return Q()
     scope = (scope or 'all').lower()
     if scope == 'self':
         return Q(user=user)
