@@ -36,7 +36,7 @@ from ..models import (
     IncidentAssignment, ORG_ROLE_FIELD,
     RESOLVED, RESOLVED_DEFINITIVE, DECLARED, TASK_DONE, COLLAB_STATUS_ACCEPTED,
 )
-from ..permissions import IsSuperAdmin
+from ..roles import is_super_admin, is_org_admin, is_bureau_agent
 
 RESOLVED_ETATS = [RESOLVED, RESOLVED_DEFINITIVE]
 # Types d'infrastructures sensibles (clés communes aux colonnes directes et au JSON indirect).
@@ -70,9 +70,13 @@ def _apply_period(qs, field, filter_type, custom_start, custom_end):
 @extend_schema(
     tags=['Référentiel & Statistiques'],
     operation_id='impact_dashboard',
-    summary="Tableau de bord IMPACT (Super Admin)",
+    summary="Tableau de bord IMPACT",
     description="Agrégats d'impact des incidents résolus / pris en compte avec action. "
-                "Réservé au Super Admin.",
+                "**Super Admin** : toutes les organisations (vue plateforme, avec performance "
+                "des interventions, mobilisation des acteurs et contribution citoyenne). "
+                "**Admin / Agent de bureau d'organisation** : uniquement l'impact de SON "
+                "organisation (bénéficiaires, infrastructures protégées, superficie cumulée) "
+                "— les sections plateforme ne sont pas renvoyées.",
     parameters=[
         OpenApiParameter('status', OpenApiTypes.STR, OpenApiParameter.QUERY, required=False,
                          enum=['all', 'resolved', 'taken_action'],
@@ -92,10 +96,28 @@ def _apply_period(qs, field, filter_type, custom_start, custom_end):
     ))},
 )
 class ImpactView(APIView):
-    """GET /MapApi/impact/ — bilan d'impact consolidé (Super Admin)."""
-    permission_classes = [IsAuthenticated, IsSuperAdmin]
+    """GET /MapApi/impact/ — bilan d'impact.
+
+    Super Admin → vue plateforme (toutes orgs) + sections plateforme.
+    Admin / Agent de bureau → impact de SON organisation uniquement (incidents pris
+    en charge par son org), sans les sections plateforme.
+    """
+    permission_classes = [IsAuthenticated]
 
     def get(self, request):
+        user = request.user
+        is_super = is_super_admin(user)
+        org = None
+        if not is_super:
+            if not (is_org_admin(user) or is_bureau_agent(user)):
+                return Response(
+                    {"error": "Réservé au super admin et aux admins / agents de bureau d'organisation."},
+                    status=status.HTTP_403_FORBIDDEN)
+            org = getattr(user, 'organisation_member', None)
+            if org is None:
+                return Response({"error": "Aucune organisation associée à ce compte."},
+                                status=status.HTTP_403_FORBIDDEN)
+
         p = request.query_params
         statut = (p.get('status') or 'all').lower()
         filter_type = p.get('filter_type') or p.get('period')
@@ -104,6 +126,10 @@ class ImpactView(APIView):
         # Base : incidents non supprimés, filtrés par période sur created_at.
         base = _apply_period(
             Incident.objects.filter(is_deleted=False), 'created_at', filter_type, cs, ce)
+        # Admin / agent de bureau : restreint à l'impact de SON organisation =
+        # incidents pris en charge par son org (taken_by ∈ org).
+        if org is not None:
+            base = base.filter(taken_by__organisation_member=org)
 
         # « Avec action » = au moins une tâche effectuée (state=done).
         acted_ids = set(
@@ -148,6 +174,34 @@ class ImpactView(APIView):
             if r:
                 area_m2 += math.pi * (r ** 2)
 
+        # --- Sections communes (super admin ET organisation) : « son impact ». ---
+        payload = {
+            'filters': {
+                'scope': 'organisation' if org is not None else 'platform',
+                'organisation': org.name if org is not None else None,
+                'status': statut,
+                'period': filter_type or 'all',
+                'incidents_in_scope': len(scope_ids),
+                'incidents_with_prediction': preds.count(),
+            },
+            'beneficiaries': {
+                # DIRECTS = personnes exposées dans l'analyse ; INDIRECTS = population potentielle.
+                'direct': direct,
+                'indirect': {k: int(v) for k, v in ind.items()},
+            },
+            'infrastructure_protected': {
+                'total': sum(infra_direct.values()),
+                'by_type': infra_direct,            # filtrable par type côté front
+                'indirect_by_type': infra_indirect,
+            },
+            # Superficie d'impact cumulée (ha) = Σ (π·rayon² / 10 000) sur le scope.
+            'cumulative_impact_area_ha': round(area_m2 / 10000.0, 2),
+        }
+
+        # --- Sections PLATEFORME : réservées au Super Admin (non renvoyées à une org). ---
+        if not is_super:
+            return Response(payload, status=status.HTTP_200_OK)
+
         # 4) Temps moyen de résolution (jours) : created_at → resolution_end_date.
         durations = []
         for inc in scope.filter(etat__in=RESOLVED_ETATS, resolution_end_date__isnull=False):
@@ -178,23 +232,7 @@ class ImpactView(APIView):
         active_citizens = (base.exclude(user_id__org_role=ORG_ROLE_FIELD)
                            .exclude(user_id__isnull=True).values('user_id').distinct().count())
 
-        return Response({
-            'filters': {
-                'status': statut,
-                'period': filter_type or 'all',
-                'incidents_in_scope': len(scope_ids),
-                'incidents_with_prediction': preds.count(),
-            },
-            'beneficiaries': {
-                # DIRECTS = personnes exposées dans l'analyse ; INDIRECTS = population potentielle.
-                'direct': direct,
-                'indirect': {k: int(v) for k, v in ind.items()},
-            },
-            'infrastructure_protected': {
-                'total': sum(infra_direct.values()),
-                'by_type': infra_direct,            # filtrable par type côté front
-                'indirect_by_type': infra_indirect,
-            },
+        payload.update({
             'resolution': {
                 'avg_resolution_days': avg_res_days,
                 'resolution_rate': {
@@ -218,6 +256,5 @@ class ImpactView(APIView):
                 'reports_led_to_action': base.filter(id__in=acted_ids).count(),
                 'active_citizen_contributors': active_citizens,
             },
-            # Superficie d'impact cumulée (ha) = Σ (π·rayon² / 10 000) sur le scope.
-            'cumulative_impact_area_ha': round(area_m2 / 10000.0, 2),
-        }, status=status.HTTP_200_OK)
+        })
+        return Response(payload, status=status.HTTP_200_OK)
