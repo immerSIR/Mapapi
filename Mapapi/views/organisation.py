@@ -546,13 +546,16 @@ class FieldAgentCreateView(APIView):
     def post(self, request, pk):
         user = request.user
 
-        # Spec §6 : créer/gérer les utilisateurs = Admin d'organisation uniquement (ou Super Admin)
+        # Créer un agent de TERRAIN = Admin d'org OU agent de bureau de CETTE org
+        # (ou Super Admin). Un agent de bureau gère les agents de terrain de son org
+        # (création comme suppression) ; la création de staff (admin/bureau) reste,
+        # elle, réservée à l'admin d'org via StaffAccountCreateView.
         if not (is_super_admin(user) or (
             user.organisation_member_id == pk
-            and is_org_admin(user)
+            and (is_org_admin(user) or is_bureau_agent(user))
         )):
             return Response(
-                {"error": "Seul un administrateur d'organisation peut créer un agent dans cette organisation."},
+                {"error": "Seul un administrateur d'organisation ou un agent de bureau de cette organisation peut créer un agent de terrain."},
                 status=status.HTTP_403_FORBIDDEN,
             )
 

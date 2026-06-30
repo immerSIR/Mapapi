@@ -1,6 +1,7 @@
 """Notification & user-action endpoints."""
-from rest_framework import viewsets, generics
+from rest_framework import viewsets, generics, status
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
 
 from drf_spectacular.utils import extend_schema, extend_schema_view
 
@@ -42,6 +43,49 @@ class NotificationViewSet(viewsets.ModelViewSet):
         if read is not None:
             qs = qs.filter(read=(str(read).lower() in ('1', 'true', 'yes')))
         return qs
+
+    @staticmethod
+    def _as_bool(val, default=True):
+        if isinstance(val, bool):
+            return val
+        if val is None:
+            return default
+        return str(val).lower() in ('1', 'true', 'yes')
+
+    @extend_schema(
+        tags=['Notifications'],
+        operation_id='notifications_mark_read',
+        summary='Marquer une notification comme lue',
+        description="Met à jour le statut de lecture d'UNE notification (au clic). "
+                    "Seul le champ `read` est modifiable (les autres sont ignorés) ; "
+                    "défaut `read=true`. Limité aux notifications de l'utilisateur connecté.",
+        request=None,
+        responses={200: NotificationSerializer},
+    )
+    def partial_update(self, request, *args, **kwargs):
+        """PATCH /notifications/<pk>/ — bascule `read` (true par défaut).
+
+        ``get_object`` s'appuie sur ``get_queryset`` (filtré par utilisateur) :
+        impossible de toucher la notification d'un autre (→ 404).
+        """
+        instance = self.get_object()
+        instance.read = self._as_bool(request.data.get('read', True))
+        instance.save(update_fields=['read'])
+        return Response(self.get_serializer(instance).data, status=status.HTTP_200_OK)
+
+    @extend_schema(
+        tags=['Notifications'],
+        operation_id='notifications_mark_all_read',
+        summary='Tout marquer comme lu',
+        description="Marque TOUTES les notifications non lues de l'utilisateur connecté "
+                    "comme lues. Renvoie le nombre de notifications mises à jour.",
+        request=None,
+        responses={200: OpenApiTypes.OBJECT},
+    )
+    def mark_all_read(self, request, *args, **kwargs):
+        """POST /notifications/mark-all-read/ — marque toutes mes notifs comme lues."""
+        updated = Notification.objects.filter(user=request.user, read=False).update(read=True)
+        return Response({'marked_read': updated}, status=status.HTTP_200_OK)
 
 
 @extend_schema_view(
