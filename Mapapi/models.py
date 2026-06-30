@@ -1129,9 +1129,9 @@ class Notification(UUIDModel):
             collab_id = str(self.colaboration_id)
             inc = str(incident_id) if incident_id else None
             if self.notif_type == 'collaboration_request':
-                return {'type': 'collaboration_request', 'tab': 'demandes',
+                return {'type': 'collaboration_request', 'tab': 'requests',
                         'collaboration_id': collab_id, 'incident_id': inc,
-                        'url': '/collaboration?tab=demandes'}
+                        'url': '/collaboration?tab=requests'}
             return {'type': 'collaboration', 'tab': 'mes-collaborations',
                     'collaboration_id': collab_id, 'incident_id': inc,
                     'url': f'/collaboration-detail/{collab_id}'}
