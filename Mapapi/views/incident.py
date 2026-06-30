@@ -515,32 +515,40 @@ class OrgIncidentsView(generics.ListAPIView):
         if not org:
             return Incident.objects.none()
 
-        source = self.request.query_params.get('source', 'all')
+        source = (self.request.query_params.get('source') or 'agents_or_internal').lower()
+        mode = (self.request.query_params.get('mode') or '').lower()
         # IDs des agents de terrain de l'org
-        agent_ids = org.members.filter(org_role=ORG_ROLE_FIELD).values_list('id', flat=True)
+        agent_ids = list(org.members.filter(org_role=ORG_ROLE_FIELD).values_list('id', flat=True))
 
-        # « Mes interventions » = incidents que MON organisation a pris en charge EN
-        # INTERNE : take_in_charge_mode='internal' ET le responsable (taken_by)
-        # appartient à MON organisation. Le filtre par taken_by est essentiel — sans
-        # lui, on renvoyait TOUS les incidents internes (toutes orgs confondues), d'où
-        # « peu importe mon organisation, toujours la même ». Les incidents sur lesquels
-        # mon org ne fait que COLLABORER (taken_by = une autre org, mode 'collaborative')
-        # sont exclus → ils relèvent de « Mes collaborations ».
-        qs = (
+        # « Mes interventions » = ce que MON organisation gère réellement :
+        #   - interne : incident pris en charge EN INTERNE par mon org
+        #               (take_in_charge_mode='internal' ET taken_by ∈ mon org), ET
+        #   - agents  : incident SIGNALÉ par un agent de terrain de mon org.
+        # Le scope par org (taken_by / reporter) est essentiel : sans lui on renvoyait
+        # tous les incidents internes de TOUTES les orgs (« peu importe mon org »). Les
+        # incidents où mon org ne fait que COLLABORER (taken_by = autre org, mode
+        # 'collaborative') sont exclus → ils relèvent de « Mes collaborations ».
+        internal_q = Q(take_in_charge_mode__iexact='internal', taken_by__organisation_member=org)
+        agents_q = Q(user_id__in=agent_ids)
+
+        if mode == 'internal' or source == 'internal':
+            flt = internal_q
+        elif source == 'agents':
+            flt = agents_q
+        elif source == 'citizens':
+            # Incidents internes de mon org signalés par des non-agents (citoyens).
+            flt = internal_q & ~agents_q
+        else:  # 'agents_or_internal' (défaut) | 'all' → union interne + agents
+            flt = internal_q | agents_q
+
+        return (
             Incident.objects
             .select_related('user_id', 'category_id', 'taken_by__organisation_member')
-            .filter(take_in_charge_mode__iexact='internal', taken_by__organisation_member=org)
+            .filter(flt)
             .exclude(is_deleted=True)
+            .distinct()
+            .order_by('-created_at')
         )
-
-        # Sous-filtre optionnel par source (qui a SIGNALÉ l'incident)
-        if source == 'agents':
-            qs = qs.filter(user_id__in=agent_ids)
-        elif source == 'citizens':
-            qs = qs.exclude(user_id__in=agent_ids)
-        # source == 'all' (défaut) : pas de filtre supplémentaire
-
-        return qs.order_by('-created_at')
 
 
 def _assigned_agent_dict(assignment):
