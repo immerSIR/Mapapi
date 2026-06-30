@@ -26,7 +26,7 @@ from drf_spectacular.types import OpenApiTypes
 from ..models import Organisation, User, Incident, ORG_ROLE_ADMIN, ORG_ROLE_BUREAU, ORG_ROLE_FIELD, PARTNER_STATUS_ACTIVE
 from ..serializer import OrganisationSerializer, OrganisationMemberSerializer
 from ..permissions import IsSuperAdminRole
-from ..roles import is_super_admin, is_org_admin
+from ..roles import is_super_admin, is_org_admin, is_bureau_agent
 from ..Send_mails import send_email
 
 
@@ -792,7 +792,11 @@ class OrganisationMemberDetailView(APIView):
         return Response(serializer.data, status=status.HTTP_200_OK)
 
     def delete(self, request, pk, user_id):
-        if not self._check_permission(request, pk):
+        # Admin d'org / Super Admin gèrent tous les membres ; en plus, un agent de
+        # BUREAU de cette org peut supprimer un agent de TERRAIN (et uniquement lui).
+        is_admin_level = self._check_permission(request, pk)
+        is_bureau_same_org = is_bureau_agent(request.user) and request.user.organisation_member_id == pk
+        if not is_admin_level and not is_bureau_same_org:
             return Response(
                 {"error": "Droits insuffisants."},
                 status=status.HTTP_403_FORBIDDEN,
@@ -802,6 +806,14 @@ class OrganisationMemberDetailView(APIView):
             member = User.objects.get(pk=user_id, organisation_member_id=pk)
         except User.DoesNotExist:
             return Response({"error": "Membre non trouvé dans cette organisation."}, status=status.HTTP_404_NOT_FOUND)
+
+        # Un agent de bureau ne peut supprimer qu'un agent de TERRAIN (jamais un
+        # admin ni un autre agent de bureau).
+        if is_bureau_same_org and not is_admin_level and member.org_role != ORG_ROLE_FIELD:
+            return Response(
+                {"error": "Un agent de bureau ne peut supprimer qu'un agent de terrain."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
 
         # Règle anti-verrouillage : on ne peut pas retirer le DERNIER admin actif de l'org.
         # Le Super Admin peut l'outrepasser (gestion plateforme : il pourra ré-affecter un admin).

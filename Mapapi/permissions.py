@@ -40,6 +40,27 @@ def _get_incident_from_view(view, request):
     return None
 
 
+def _is_internal_org_member(incident, user):
+    """En prise en charge INTERNE, tout membre de l'organisation propriétaire
+    (celle de ``incident.taken_by``) est considéré comme collaborateur de
+    l'incident, au même titre que le leader.
+
+    Aligne les permissions sur le comportement déjà implémenté côté discussion
+    (``DiscussionMessageView``), où les membres de l'org propriétaire participent
+    à l'incident interne de leur organisation. Sans cela, un agent de bureau (ou
+    l'admin) ne pouvait pas voir les tâches / sous-ressources d'un incident pris
+    en charge en interne par SON org (403/404), alors qu'il y a accès au chat.
+    """
+    if not user or not getattr(user, 'is_authenticated', False):
+        return False
+    if not incident or getattr(incident, 'take_in_charge_mode', None) != 'internal':
+        return False
+    owner = getattr(incident, 'taken_by', None)
+    owner_org = getattr(owner, 'organisation_member_id', None)
+    user_org = getattr(user, 'organisation_member_id', None)
+    return bool(owner_org and user_org and owner_org == user_org)
+
+
 class IsIncidentLeader(BasePermission):
     """Autorise uniquement le leader de l'incident.
     Le leader est déterminé par une Collaboration acceptée de rôle 'leader',
@@ -91,6 +112,8 @@ class IsIncidentCollaborator(BasePermission):
             return True
         if incident.taken_by_id == request.user.id:
             return True
+        if _is_internal_org_member(incident, request.user):
+            return True
         return Collaboration.objects.filter(
             incident=incident, user=request.user, status='accepted'
         ).exists()
@@ -100,6 +123,8 @@ class IsIncidentCollaborator(BasePermission):
         if incident is None:
             return False
         if incident.taken_by_id == request.user.id:
+            return True
+        if _is_internal_org_member(incident, request.user):
             return True
         return Collaboration.objects.filter(
             incident=incident, user=request.user, status='accepted'
@@ -123,6 +148,8 @@ class IsIncidentContributor(BasePermission):
             return IsIncidentCollaborator().has_permission(request, view)
         incident = _get_incident_from_view(view, request)
         if incident is None:
+            return True
+        if _is_internal_org_member(incident, request.user):
             return True
         return Collaboration.objects.filter(
             incident=incident,
@@ -150,6 +177,8 @@ class IsIncidentLeaderOrContributor(BasePermission):
         if incident is None:
             return True
         if incident.taken_by_id == request.user.id:
+            return True
+        if _is_internal_org_member(incident, request.user):
             return True
         return Collaboration.objects.filter(
             incident=incident,
