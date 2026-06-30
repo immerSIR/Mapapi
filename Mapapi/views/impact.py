@@ -20,23 +20,25 @@ Filtres : `?status=resolved|taken_action|all` (défaut `all`) et période
 import math
 from datetime import timedelta
 
-from django.db.models import Q, Sum
+from django.db.models import Q, Sum, F, Prefetch
 from django.utils import timezone
 
 from rest_framework.views import APIView
+from rest_framework import generics, serializers, status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
-from rest_framework import status
 
-from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiResponse
+from drf_spectacular.utils import extend_schema, extend_schema_field, OpenApiParameter, OpenApiResponse
 from drf_spectacular.types import OpenApiTypes
 
 from ..models import (
     Incident, Prediction, PredictionStatus, IncidentTask, Collaboration,
-    IncidentAssignment, ORG_ROLE_FIELD,
+    IncidentAssignment, IncidentOrgAssignment, ORG_ROLE_FIELD,
     RESOLVED, RESOLVED_DEFINITIVE, DECLARED, TASK_DONE, COLLAB_STATUS_ACCEPTED,
 )
 from ..roles import is_super_admin, is_org_admin, is_bureau_agent
+from ..services.incident_orgs import acting_organisations
+from .common import IncidentPagination
 
 RESOLVED_ETATS = [RESOLVED, RESOLVED_DEFINITIVE]
 # Types d'infrastructures sensibles (clés communes aux colonnes directes et au JSON indirect).
@@ -65,6 +67,55 @@ def _apply_period(qs, field, filter_type, custom_start, custom_end):
     if filter_type == 'custom_range' and custom_start and custom_end:
         return qs.filter(**{f'{field}__date__range': [custom_start, custom_end]})
     return qs
+
+
+def impact_role(user):
+    """Détermine le périmètre IMPACT selon le rôle.
+
+    Retourne ``(is_super, org, error)`` : ``error`` est une ``Response`` 403 si l'accès
+    n'est pas permis (sinon None). Super Admin → ``org=None`` (plateforme) ; admin d'org /
+    agent de bureau → leur organisation ; autres rôles → 403.
+    """
+    if is_super_admin(user):
+        return True, None, None
+    if is_org_admin(user) or is_bureau_agent(user):
+        org = getattr(user, 'organisation_member', None)
+        if org is None:
+            return False, None, Response(
+                {"error": "Aucune organisation associée à ce compte."},
+                status=status.HTTP_403_FORBIDDEN)
+        return False, org, None
+    return False, None, Response(
+        {"error": "Réservé au super admin et aux admins / agents de bureau d'organisation."},
+        status=status.HTTP_403_FORBIDDEN)
+
+
+def impact_scope(request, org, acted_ids=None):
+    """Construit le périmètre d'incidents IMPACT (filtré par ?status= et la période).
+
+    Restreint aux incidents pris en charge par ``org`` (taken_by ∈ org) si non None.
+    Retourne ``(base_qs, scope_qs, statut, acted_ids)``.
+    """
+    p = request.query_params
+    statut = (p.get('status') or 'all').lower()
+    base = _apply_period(
+        Incident.objects.filter(is_deleted=False), 'created_at',
+        p.get('filter_type') or p.get('period'), p.get('custom_start'), p.get('custom_end'))
+    if org is not None:
+        base = base.filter(taken_by__organisation_member=org)
+    if acted_ids is None:
+        acted_ids = set(
+            IncidentTask.objects.filter(state=TASK_DONE).values_list('incident_id', flat=True))
+    resolved_q = Q(etat__in=RESOLVED_ETATS)
+    taken_action_q = (~Q(etat__in=RESOLVED_ETATS)
+                      & Q(taken_by__isnull=False) & Q(id__in=acted_ids))
+    if statut in ('resolved', 'resolu', 'résolu', 'resolus'):
+        scope = base.filter(resolved_q)
+    elif statut in ('taken_action', 'taken_with_action', 'pris_en_compte', 'action'):
+        scope = base.filter(taken_action_q)
+    else:  # all / les deux
+        scope = base.filter(resolved_q | taken_action_q)
+    return base, scope, statut, acted_ids
 
 
 @extend_schema(
@@ -105,45 +156,11 @@ class ImpactView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        user = request.user
-        is_super = is_super_admin(user)
-        org = None
-        if not is_super:
-            if not (is_org_admin(user) or is_bureau_agent(user)):
-                return Response(
-                    {"error": "Réservé au super admin et aux admins / agents de bureau d'organisation."},
-                    status=status.HTTP_403_FORBIDDEN)
-            org = getattr(user, 'organisation_member', None)
-            if org is None:
-                return Response({"error": "Aucune organisation associée à ce compte."},
-                                status=status.HTTP_403_FORBIDDEN)
+        is_super, org, err = impact_role(request.user)
+        if err is not None:
+            return err
 
-        p = request.query_params
-        statut = (p.get('status') or 'all').lower()
-        filter_type = p.get('filter_type') or p.get('period')
-        cs, ce = p.get('custom_start'), p.get('custom_end')
-
-        # Base : incidents non supprimés, filtrés par période sur created_at.
-        base = _apply_period(
-            Incident.objects.filter(is_deleted=False), 'created_at', filter_type, cs, ce)
-        # Admin / agent de bureau : restreint à l'impact de SON organisation =
-        # incidents pris en charge par son org (taken_by ∈ org).
-        if org is not None:
-            base = base.filter(taken_by__organisation_member=org)
-
-        # « Avec action » = au moins une tâche effectuée (state=done).
-        acted_ids = set(
-            IncidentTask.objects.filter(state=TASK_DONE).values_list('incident_id', flat=True))
-
-        resolved_q = Q(etat__in=RESOLVED_ETATS)
-        taken_action_q = (~Q(etat__in=RESOLVED_ETATS)
-                          & Q(taken_by__isnull=False) & Q(id__in=acted_ids))
-        if statut in ('resolved', 'resolu', 'résolu', 'resolus'):
-            scope = base.filter(resolved_q)
-        elif statut in ('taken_action', 'taken_with_action', 'pris_en_compte', 'action'):
-            scope = base.filter(taken_action_q)
-        else:  # all / les deux
-            scope = base.filter(resolved_q | taken_action_q)
+        base, scope, statut, acted_ids = impact_scope(request, org)
         scope_ids = list(scope.values_list('id', flat=True))
 
         preds = Prediction.objects.filter(incident_id__in=scope_ids, status__in=_COMPLETED)
@@ -180,7 +197,7 @@ class ImpactView(APIView):
                 'scope': 'organisation' if org is not None else 'platform',
                 'organisation': org.name if org is not None else None,
                 'status': statut,
-                'period': filter_type or 'all',
+                'period': request.query_params.get('filter_type') or request.query_params.get('period') or 'all',
                 'incidents_in_scope': len(scope_ids),
                 'incidents_with_prediction': preds.count(),
             },
@@ -258,3 +275,132 @@ class ImpactView(APIView):
             },
         })
         return Response(payload, status=status.HTTP_200_OK)
+
+
+class ImpactIncidentSerializer(serializers.ModelSerializer):
+    """Incident du périmètre impact, enrichi pour la carte : prédiction IA (si elle
+    existe), toutes les tâches, et les organisations ayant agi/collaboré dessus."""
+    prediction = serializers.SerializerMethodField()
+    tasks = serializers.SerializerMethodField()
+    collaborating_organisations = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Incident
+        fields = [
+            'id', 'title', 'zone', 'description', 'lattitude', 'longitude',
+            'severity', 'etat', 'take_in_charge_mode', 'photo', 'thumbnail',
+            'created_at', 'resolution_start_date', 'resolution_end_date',
+            'prediction', 'tasks', 'collaborating_organisations',
+        ]
+
+    @extend_schema_field(OpenApiTypes.OBJECT)
+    def get_prediction(self, obj):
+        p = getattr(obj, 'prediction', None)
+        if p is None or p.status not in _COMPLETED:
+            return None
+        fr = p.full_response or {}
+        ihi = fr.get('indirect_human_impact') or {}
+        isd = fr.get('indirect_social_data') or {}
+        return {
+            'status': p.status,
+            'incident_type': p.incident_type,
+            'macro_category': p.macro_category,
+            'sub_category': p.sub_category,
+            'global_impact_score': p.global_impact_score,
+            'impact_radius_meters': p.impact_radius_meters,
+            'spread_vectors': p.spread_vectors or [],
+            'direct': {
+                'total_population_exposed': p.total_population_exposed or 0,
+                'adult_men_exposed': p.adult_men_exposed or 0,
+                'adult_women_exposed': p.adult_women_exposed or 0,
+                'children_exposed': p.children_exposed or 0,
+            },
+            'indirect': {
+                'total_population_exposed': ihi.get('total_population_exposed') or 0,
+                'adult_men_exposed': ihi.get('adult_men_exposed') or 0,
+                'adult_women_exposed': ihi.get('adult_women_exposed') or 0,
+                'children_exposed': ihi.get('children_exposed') or 0,
+                'residential_buildings': isd.get('residential_buildings') or 0,
+                'vigilance_radius_meters': fr.get('indirect_vigilance_radius_meters'),
+            },
+            'infrastructure': {t: getattr(p, t, 0) or 0 for t in INFRA_TYPES},
+            'indirect_infrastructure': {t: (isd.get(t) or 0) for t in INFRA_TYPES},
+        }
+
+    @extend_schema_field(OpenApiTypes.OBJECT)
+    def get_tasks(self, obj):
+        out = []
+        for t in obj.tasks.all():
+            ag = t.assigned_to
+            out.append({
+                'id': t.id, 'title': t.title, 'description': t.description,
+                'state': t.state, 'is_confirmed': t.is_confirmed,
+                'start_date': t.start_date, 'end_date': t.end_date,
+                'assigned_to': str(t.assigned_to_id) if t.assigned_to_id else None,
+                'assigned_to_name': ((f"{ag.first_name or ''} {ag.last_name or ''}".strip() or ag.email)
+                                     if ag else None),
+            })
+        return out
+
+    @extend_schema_field(OpenApiTypes.OBJECT)
+    def get_collaborating_organisations(self, obj):
+        return acting_organisations(obj)
+
+
+@extend_schema(
+    tags=['Référentiel & Statistiques'],
+    operation_id='impact_incidents_list',
+    summary="Incidents du périmètre impact (paginé + recherche)",
+    description="Liste **paginée** et **cherchable** des incidents derrière le tableau de "
+                "bord impact — mêmes portée et filtres que `/impact/` (Super Admin = toutes "
+                "orgs ; admin/agent de bureau = incidents pris en charge par SON org). Chaque "
+                "incident porte sa **prédiction IA** (si elle existe), **toutes ses tâches** et "
+                "les **organisations** ayant agi/collaboré dessus.",
+    parameters=[
+        OpenApiParameter('status', OpenApiTypes.STR, OpenApiParameter.QUERY, required=False,
+                         enum=['all', 'resolved', 'taken_action']),
+        OpenApiParameter('search', OpenApiTypes.STR, OpenApiParameter.QUERY, required=False,
+                         description="Recherche titre / description / zone."),
+        OpenApiParameter('filter_type', OpenApiTypes.STR, OpenApiParameter.QUERY, required=False,
+                         enum=['today', 'yesterday', 'last_7_days', 'last_30_days',
+                               'this_month', 'last_month', 'custom_range']),
+        OpenApiParameter('custom_start', OpenApiTypes.DATE, OpenApiParameter.QUERY, required=False),
+        OpenApiParameter('custom_end', OpenApiTypes.DATE, OpenApiParameter.QUERY, required=False),
+        OpenApiParameter('page', OpenApiTypes.INT, OpenApiParameter.QUERY, required=False),
+        OpenApiParameter('page_size', OpenApiTypes.INT, OpenApiParameter.QUERY, required=False),
+    ],
+    responses={200: ImpactIncidentSerializer(many=True)},
+)
+class ImpactIncidentsView(generics.ListAPIView):
+    """GET /MapApi/impact/incidents/ — liste paginée + recherche des incidents impact."""
+    permission_classes = [IsAuthenticated]
+    serializer_class = ImpactIncidentSerializer
+    pagination_class = IncidentPagination
+
+    def list(self, request, *args, **kwargs):
+        _, _, err = impact_role(request.user)
+        if err is not None:
+            return err
+        return super().list(request, *args, **kwargs)
+
+    def get_queryset(self):
+        is_super, org, err = impact_role(self.request.user)
+        if err is not None:
+            return Incident.objects.none()
+        _, scope, _, _ = impact_scope(self.request, org)
+        search = (self.request.query_params.get('search') or '').strip()
+        if search:
+            scope = scope.filter(
+                Q(title__icontains=search) | Q(description__icontains=search)
+                | Q(zone__icontains=search))
+        return (
+            scope
+            .select_related('user_id', 'category_id', 'taken_by__organisation_member', 'prediction')
+            .prefetch_related(
+                'tasks', 'tasks__assigned_to',
+                'collaboration_set__user__organisation_member',
+                Prefetch('org_assignments',
+                         queryset=IncidentOrgAssignment.objects.select_related('organisation')),
+            )
+            .order_by(F('resolution_end_date').desc(nulls_last=True), '-created_at')
+        )
