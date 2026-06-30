@@ -46,7 +46,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 from ..services.model_chat_client import ask_model_chat
-from .common import CustomPageNumberPagination, IncidentPagination
+from .common import CustomPageNumberPagination, IncidentPagination, FieldReportPagination
 from rest_framework_simplejwt.tokens import RefreshToken
 from django.contrib.auth.hashers import check_password
 from .. import roles as web_roles
@@ -921,7 +921,10 @@ class AgentAssignedIncidentsView(generics.ListAPIView):
         description="Rapports de visite terrain, filtrés selon le rôle (staff → tous, "
                     "agent de terrain → les siens, sinon ceux de son organisation). "
                     "Filtre optionnel `?incident=<uuid>` pour n'avoir que les rapports "
-                    "des agents sur un incident donné.",
+                    "des agents sur un incident donné. **Paginé** (`{count, next, previous, "
+                    "results}`, 10/page par défaut) : pour un bouton « charger plus », "
+                    "suivre `next` (ou `?page=`) jusqu'à `next: null`. Taille de lot via "
+                    "`?page_size=`.",
         parameters=[
             OpenApiParameter('incident', OpenApiTypes.UUID, OpenApiParameter.QUERY,
                              description="Ne renvoyer que les rapports de terrain de cet incident."),
@@ -947,6 +950,9 @@ class AgentAssignedIncidentsView(generics.ListAPIView):
 class FieldReportListCreateView(generics.ListCreateAPIView):
     permission_classes = [IsAuthenticated]
     serializer_class = FieldReportSerializer
+    # Pagination « charger plus » : réponse {count, next, previous, results}.
+    # Le front suit `next` jusqu'à null. Taille de lot réglable via ?page_size=.
+    pagination_class = FieldReportPagination
 
     def get_queryset(self):
         user = self.request.user
