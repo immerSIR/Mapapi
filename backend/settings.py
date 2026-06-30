@@ -536,11 +536,8 @@ TWILIO_ACCOUNT_SID = os.environ.get('TWILIO_ACCOUNT_SID')
 TWILIO_AUTH_TOKEN = os.environ.get('TWILIO_AUTH_TOKEN')
 TWILIO_PHONE_NUMBER = os.environ.get('TWILIO_PHONE_NUMBER')
 
-
-# Orange SMS API configuration
-ORANGE_CLIENT_ID = os.environ.get('ORANGE_CLIENT_ID')
-ORANGE_CLIENT_SECRET = os.environ.get('ORANGE_CLIENT_SECRET')
-ORANGE_SENDER_ADDRESS = os.environ.get('ORANGE_SENDER_ADDRESS')
+# SMS OTP : envoyé via Twilio (cf. Mapapi/views/user.py send_sms). L'ancienne
+# intégration Orange Mali a été retirée (alignement avec l'upstream « orange to twilio »).
 
 # Model-deploy service (remote AI analysis pipeline).
 # NB: the service exposes /analyze, /analyze/upload and /chat — there is NO
