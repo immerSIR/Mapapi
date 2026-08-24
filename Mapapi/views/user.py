@@ -725,7 +725,7 @@ class PhoneOTPView(generics.CreateAPIView):
         operation_id='auth_phone_otp_create',
         summary="Générer et envoyer un code OTP",
         description="Génère un code OTP pour le numéro fourni et l'envoie par "
-                    "SMS (Orange Mali). Endpoint public.",
+                    "SMS (Twilio). Endpoint public.",
         request=PhoneOTPSerializer,
         responses={
             201: inline_serializer(
@@ -765,12 +765,12 @@ def send_sms(phone_number, otp_code):
         )
 
         if message.sid:
-            print(f"SMS OTP envoyé via Twilio. SID: {message.sid}")
+            logger.info("SMS OTP envoyé via Twilio")
             return True
-        print("Erreur: pas de SID retourné par Twilio")
+        logger.error("Twilio n'a pas renvoyé d'identifiant de message")
         return False
-    except Exception as e:
-        print(f"Erreur lors de l'envoi SMS Twilio: {str(e)}")
+    except Exception:
+        logger.exception("Échec de l'envoi SMS via Twilio")
         return False
     
 
@@ -947,4 +947,3 @@ class VerifyOTPView(APIView):
                 return Response({"message": "OTP invalide ou expiré"}, status=status.HTTP_400_BAD_REQUEST)
         except User.DoesNotExist:
             return Response({"message": "Utilisateur non trouvé"}, status=status.HTTP_404_NOT_FOUND)
-
